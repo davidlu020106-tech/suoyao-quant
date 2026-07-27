@@ -47,3 +47,28 @@ jobs:
           name: daily_picks_json_${{ github.run_id }}
           path: quant_factors/daily_picks.json
           retention-days: 7
+
+      - name: 输出推荐摘要
+        run: |
+          python -c "
+import json, os
+with open('quant_factors/daily_picks.json') as f:
+    data = json.load(f)
+lines = ['# 锁妖塔推荐摘要',
+         '生成时间: $(date +\"%Y-%m-%d %H:%M\")',
+         '推荐币种: ' + str(len(data)),
+         '']
+longs = [r for r in data if r.get('direction') == 'long']
+shorts = [r for r in data if r.get('direction') == 'short']
+if longs:
+    lines.append('## 🟢 做多')
+    for r in longs[:5]:
+        lines.append(f\"- {r['base']}: ADX={r['adx']:.0f} 入场=\${r['entry']:.4f} TP1=\${r['r1']:.4f} 利润={r['tp1_profit']:.0f}%\")
+if shorts:
+    lines.append('')
+    lines.append('## 🔴 做空')
+    for r in shorts[:5]:
+        lines.append(f\"- {r['base']}: ADX={r['adx']:.0f} 入场=\${r['entry']:.4f} TP1=\${r['s2']:.4f} 利润={r['tp1_profit']:.0f}%\")
+with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+    f.write('\n'.join(lines))
+"
