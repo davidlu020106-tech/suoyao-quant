@@ -1,0 +1,25 @@
+# 锁妖塔量化系统 .gitignore
+
+# Python缓存
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# 运行结果（不提交到仓库，用Actions Artifact保存）
+quant_factors/daily_picks_*.docx
+quant_factors/daily_picks_*.json
+
+# 大文件（原始数据已有，不重复提交）
+*.zip
+*.png
+*.pptx
+
+# 系统配置
+.reasonix/
+reasonix.toml
+
+# 环境
+.env
+venv/
+.venv/

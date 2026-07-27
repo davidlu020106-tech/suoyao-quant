@@ -1,0 +1,48 @@
+name: 锁妖塔每小时扫描
+
+on:
+  schedule:
+    # 每小时跑一次（整点过5分，避开整点高峰期）
+    - cron: '5 * * * *'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: |
+          pip install --upgrade pip
+          pip install pandas numpy python-docx
+
+      - name: 运行全量扫描
+        env:
+          OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
+          OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
+          OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
+        run: |
+          python quant_factors/run_daily_picks.py --top 40 --min-r1 1.5
+
+      - name: 上传Word报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily_picks_${{ github.run_id }}
+          path: quant_factors/daily_picks_*.docx
+          retention-days: 7  # 保留7天
+
+      - name: 上传JSON数据
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily_picks_json_${{ github.run_id }}
+          path: quant_factors/daily_picks.json
+          retention-days: 7

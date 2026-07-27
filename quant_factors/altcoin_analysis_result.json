@@ -1,0 +1,57 @@
+[
+  {
+    "base": "APE",
+    "symbol": "APEUSDT",
+    "timestamp": "2026-07-17T11:54:54.586588",
+    "levels": {
+      "close": 0.14975,
+      "pivot": 0.15010333333333334,
+      "r1": 0.15180666666666667,
+      "r2": 0.15386333333333332,
+      "s1": 0.1480466666666667,
+      "s2": 0.14634333333333335,
+      "fib_382": 0.14859306,
+      "fib_500": 0.141965,
+      "fib_618": 0.13533694000000002,
+      "ma7": 0.1518057142857143,
+      "ma20": 0.14845899999999998,
+      "ma50": 0.13913399999999998,
+      "ma200": 0.13751185,
+      "high_20d": 0.17005,
+      "low_20d": 0.13314,
+      "rsi14": 52.30427327793711,
+      "vol_ratio": 0.2660007426996972,
+      "price_above_ma50": 1.0,
+      "price_above_ma200": 1.0,
+      "is_green": 0.0
+    },
+    "entry": {
+      "score": 5.8,
+      "signal": "BUY",
+      "reason": "near S1 support; RSI neutral; uptrend (above MA50/200); low volume; limited headroom",
+      "entry_zone": "$0.1463 - $0.1480",
+      "take_profit_1": 0.15180666666666667,
+      "take_profit_2": 0.15386333333333332,
+      "take_profit_3": 0.15797666666666665,
+      "stop_loss": 0.14634333333333335
+    },
+    "consensus": {
+      "long": 0.0,
+      "short": 2.0,
+      "neutral": 85.0,
+      "total": 87.0,
+      "bias": -1.0,
+      "firing_count": 2.0,
+      "top_firing": [
+        {
+          "id": "cap_038_4year_cycle",
+          "score": -0.4
+        },
+        {
+          "id": "cap_037_halving_cycle",
+          "score": -0.3
+        }
+      ]
+    }
+  }
+]

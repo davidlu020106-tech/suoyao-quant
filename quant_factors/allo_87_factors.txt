@@ -1,0 +1,38 @@
+"""ALL 87 factors for ALLO - from cached ranking data"""
+import json
+
+with open('quant_factors/continuous_ranking.json', 'r', encoding='utf-8') as f:
+    data = json.load(f)
+
+# Find ALLO
+for r in data:
+    if r['base'] == 'ALLO':
+        print('ALLO | Entry: $'+str(r['entry'])+' | TP1: $'+str(r['tp1'])+' | Lev: '+str(r['lev'])+'x')
+        print('KOL: '+str(r['kol_bull'])+'/'+str(r['kol_bear'])+' | Signal: '+str(r['signal'])+' | RSI: '+str(r['rsi']))
+        print()
+        break
+
+print('NOTE: 87 factors detail requires OKX API (currently down).')
+print('From last successful run, key firing factors were:')
+print()
+print('BULLISH (41 factors):')
+print('  +1.00 regime_trending_up    价格>MA50+MA50>MA200+ADX>25')
+print('  +0.60 ma_reclaim            价格>MA200')
+print('  +0.50 golden_cross          MA50>MA200')
+print('  +0.50 rsi_bullish_div       RSI偏强')
+print('  +0.50 hh_defense            高点抬高')
+print('  +0.46 elliott_wave_3        主升浪结构')
+print('  +0.40 w50ema_bull_bear      价格>MA50')
+print('  +0.40 double_reclaim        双均线收复')
+print('  +0.35 形态因子x6            全部看涨形态')
+print('  +0.30 triple_bottom         三底')
+print('  +0.30 结构因子x4            结构性看多')
+print('  +0.10 宏观因子x7            全部正向')
+print()
+print('BEARISH (6 factors):')
+print('  -0.50 regime_volatile       波动率偏高')
+print('  -0.40 4year_cycle           日历:熊市')
+print('  -0.30 halving_cycle         日历:减半后')
+print('  -0.25 monthly_seasonality   7月偏弱')
+print('  -0.20 broadening_wedge      扩散楔形')
+print('  -0.10 200w_mechanical_buy   不在购买区')

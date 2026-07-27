@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-07-15T16:08:55.292133",
+  "symbol": "ETH/USDT",
+  "price": 1873.36,
+  "6h_forecast": {
+    "low": 1817.16,
+    "high": 1929.56,
+    "pivot": 1873.1,
+    "r1": 1875.85,
+    "r2": 1878.34,
+    "s1": 1870.36,
+    "s2": 1867.36
+  },
+  "consensus": {
+    "total": 99,
+    "bullish": 72,
+    "bearish": 10,
+    "neutral": 17,
+    "avg_signal": 0.0922,
+    "bias": "bullish"
+  },
+  "technical": {
+    "rsi14": 59.7,
+    "ma50": 1819.67,
+    "ma200": 1789.25,
+    "atr14": 13.25
+  }
+}
