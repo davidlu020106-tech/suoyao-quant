@@ -30,6 +30,7 @@ jobs:
           OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
           OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
           OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
+          TZ: Asia/Shanghai
         run: |
           python quant_factors/run_daily_picks.py --top 40 --min-r1 1.5
 
