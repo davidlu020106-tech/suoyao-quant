@@ -9,6 +9,8 @@ __pycache__/
 # 运行结果（不提交到仓库，用Actions Artifact保存）
 quant_factors/daily_picks_*.docx
 quant_factors/daily_picks_*.json
+quant_factors/daily_picks.md
+quant_factors/~$*.docx
 
 # 大文件（原始数据已有，不重复提交）
 *.zip
