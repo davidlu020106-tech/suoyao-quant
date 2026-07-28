@@ -384,6 +384,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         'market_state': state,
         'direction': direction,
         'fr_pct': fr * 100,
+        'df_15m': cdl_h1,  # 原始15m K线数据，供审判系统复用
     }
 
 
@@ -620,20 +621,37 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'    - 最终推荐: {len(passed)}')
     print()
 
-    # ── 审判系统验证 ──
+    # ── 审判系统验证（复用锁妖塔已拉取的K线数据）──
     try:
         from judge_system.run_judge import run_judge, ensure_detectors_registered
         ensure_detectors_registered()
-        # 传全部扫描过的币种，而不是仅过滤通过的
+        # 从扫描结果中提取15m K线数据，避免重复拉取
+        coins_data = {}
+        for r in results:
+            if 'df_15m' in r:
+                import pandas as pd
+                raw = r['df_15m']
+                df = pd.DataFrame(raw)
+                df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'vol_currency']
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                df = df.sort_values('timestamp').reset_index(drop=True)
+                coins_data[r['base']] = df
         coin_symbols = [c['base'] for c in coins_list] if coins_list else None
-        run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True)
+        run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True,
+                  coins_data=coins_data)
     except Exception as e:
         print(f'  [审判] 跳过: {e}')
     print()
 
     # ── 保存 ──
     op = os.path.join(QF, 'daily_picks.json')
-    json.dump(passed, open(op, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+    # 去掉 df_15m 字段（只用于审判系统，无需保存到JSON）
+    passed_clean = []
+    for r in passed:
+        clean = {k: v for k, v in r.items() if k != 'df_15m'}
+        passed_clean.append(clean)
+    json.dump(passed_clean, open(op, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
 
     # 保存Markdown
     md_lines = [

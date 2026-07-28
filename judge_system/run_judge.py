@@ -224,7 +224,8 @@ def print_verdict_table(verdicts: dict, pagoda: dict, top_n: int = 20):
     print()
 
 
-def run_judge(top_n=40, coins=None, compare=True, save=False, table_only=False):
+def run_judge(top_n=40, coins=None, compare=True, save=False, table_only=False,
+              coins_data=None):
     """
     审判系统主函数 — 供外部调用
 
@@ -234,6 +235,7 @@ def run_judge(top_n=40, coins=None, compare=True, save=False, table_only=False):
         compare: 是否与锁妖塔对比
         save: 是否保存JSON
         table_only: 是否只输出表格（供锁妖塔调用）
+        coins_data: 预加载的 {symbol: DataFrame} 字典（复用锁妖塔数据）
 
     Returns:
         (verdicts dict, 分歧数量)
@@ -261,7 +263,13 @@ def run_judge(top_n=40, coins=None, compare=True, save=False, table_only=False):
     for i, symbol in enumerate(symbols, 1):
         if not table_only:
             print(f"\r  [审判] [{i}/{len(symbols)}] {symbol}...", end='', flush=True)
-        df = fetch_coin_data(symbol)
+        
+        # 优先复用预加载的数据
+        if coins_data and symbol in coins_data:
+            df = coins_data[symbol]
+        else:
+            df = fetch_coin_data(symbol)
+        
         if df is None:
             continue
         pagoda = pagoda_results.get(symbol)
