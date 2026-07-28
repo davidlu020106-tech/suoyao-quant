@@ -426,6 +426,16 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'  因子: {len(CAP_REGISTRY)} | 交易员: 99')
     print(f'  扫描: 前{top_n}币 | 过滤: R1≥{min_r1}% OI≥{min_oi/1e6:.1f}M')
 
+    # ── 回测上次推荐 ──
+    try:
+        from judge_system.backtest_log import init as bt_init, backtest_last, print_backtest
+        bt_init(QF)
+        bt_results, bt_time = backtest_last()
+        if bt_results:
+            print_backtest(bt_results, bt_time)
+    except Exception as e:
+        print(f'  [回测] 跳过: {e}')
+
     reg = CAP_REGISTRY; rids = set(reg.keys())
 
     # 加载交易员
@@ -732,6 +742,25 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                                       r.get('okx_lev', 20), df)
                     print(f'  --- 精准入场: {base} ---')
                     print_entry_plan(plan)
+
+            # ── 保存本次推荐到回测日志 ──
+            try:
+                from judge_system.backtest_log import save_recommendation
+                rec_data = []
+                for c in valid[:3]:
+                    r = next((x for x in results if x['base'] == c['base']), None)
+                    rec_data.append({
+                        'base': c['base'],
+                        'direction': c['direction'],
+                        'entry': c['entry'],
+                        'tp1': c['tp1'],
+                        'liq': c['entry'] + c['entry']/r.get('okx_lev',20)*0.7 if c['direction']=='short'
+                               else c['entry'] - c['entry']/r.get('okx_lev',20)*0.7,
+                        'lev': r.get('okx_lev', 20) if r else 20,
+                    })
+                save_recommendation(rec_data)
+            except:
+                pass
 
     except Exception as e:
         print(f'  [审判] 跳过: {e}')
