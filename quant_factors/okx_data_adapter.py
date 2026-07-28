@@ -198,6 +198,7 @@ STABLE_BASES = {
     'USDG', 'TRY', 'BRL', 'CAD', 'CHF', 'HKD', 'MXN',
     'NOK', 'NZD', 'PLN', 'RUB', 'SEK', 'ZAR', 'CZK', 'DKK',
     'ILS', 'INR', 'MYR', 'PHP', 'THB', 'VND', 'XOF',
+    'PI',  # 不可交易
 }
 
 def fetch_altcoin_list(top_n=30, min_volume_usd=500_000):

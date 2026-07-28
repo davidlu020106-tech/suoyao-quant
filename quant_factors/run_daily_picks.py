@@ -29,7 +29,7 @@ from capabilities import CAP_REGISTRY
 
 STABLE = {'USDT','USDC','DAI','TUSD','BUSD','FDUSD','USDP',
     'EUR','GBP','AUD','SGD','AED','CNY','JPY','KRW','USDG',
-    'TRY','BRL','CAD','CHF','HKD','MXN'}
+    'TRY','BRL','CAD','CHF','HKD','MXN','PI'}
 
 # ═══════════════════════════════════════
 # OKX API
