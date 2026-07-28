@@ -426,13 +426,20 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'  因子: {len(CAP_REGISTRY)} | 交易员: 99')
     print(f'  扫描: 前{top_n}币 | 过滤: R1≥{min_r1}% OI≥{min_oi/1e6:.1f}M')
 
-    # ── 回测上次推荐 ──
+    # ── 回测上次推荐（最近3次）──
     try:
-        from judge_system.backtest_log import init as bt_init, backtest_last, print_backtest
+        from judge_system.backtest_log import init as bt_init, backtest_last, backtest_today, print_backtest
         bt_init(QF)
-        bt_results, bt_time = backtest_last()
+        # 整日回测（12点左右触发）
+        now_hour = datetime.now().hour
+        if 11 <= now_hour <= 13:
+            bt_results, bt_summary = backtest_today()
+            if bt_results:
+                print_backtest(bt_results, bt_summary)
+        # 每次运行都回测最近3次
+        bt_results, bt_summary = backtest_last()
         if bt_results:
-            print_backtest(bt_results, bt_time)
+            print_backtest(bt_results, bt_summary)
     except Exception as e:
         print(f'  [回测] 跳过: {e}')
 

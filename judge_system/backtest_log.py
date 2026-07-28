@@ -40,12 +40,21 @@ def load_history() -> list:
     return []
 
 
-def get_last_recommendation() -> Optional[dict]:
-    """获取上一次推荐记录"""
+def get_recent_recommendations(n: int = 3) -> list:
+    """获取最近N次推荐记录"""
     history = load_history()
     if not history:
-        return None
-    return history[-1]
+        return []
+    return history[-n:]
+
+
+def get_today_recommendations() -> list:
+    """获取当天所有推荐记录"""
+    history = load_history()
+    if not history:
+        return []
+    today = datetime.now().strftime('%Y-%m-%d')
+    return [r for r in history if r.get('date', '').startswith(today)]
 
 
 def save_recommendation(coins_data: list):
@@ -92,126 +101,121 @@ def get_current_prices(symbols: list) -> dict:
     return prices
 
 
-def backtest_last():
+def backtest_records(records: list, label: str = "上次推荐"):
     """
-    回测上一次推荐
+    回测多条推荐记录
+
+    Args:
+        records: 推荐记录列表，每条包含 recommendations 列表
+        label: 标签（"最近3次" / "今日汇总"）
 
     Returns:
-        (回测结果列表, 距推荐时间字符串) 或 (None, None)
+        (回测结果列表, 汇总字符串)
     """
-    last = get_last_recommendation()
-    if not last:
-        return None, None
+    all_results = []
+    total_recs = 0
+    total_ok = 0
+    total_fail = 0
+    total_pending = 0
 
-    recs = last.get('recommendations', [])
-    if not recs:
-        return None, None
-
-    symbols = [r['base'] for r in recs]
-    prices = get_current_prices(symbols)
-
-    # 计算距推荐时间
-    rec_time = last.get('timestamp', 0)
-    elapsed = time.time() - rec_time
-    if elapsed < 60:
-        time_str = f'{elapsed:.0f}秒'
-    elif elapsed < 3600:
-        time_str = f'{elapsed/60:.0f}分钟'
-    elif elapsed < 86400:
-        time_str = f'{elapsed/3600:.1f}小时'
-    else:
-        time_str = f'{elapsed/86400:.1f}天'
-
-    results = []
-    for r in recs:
-        base = r['base']
-        direction = r['direction']
-        entry = r['entry']
-        tp1 = r['tp1']
-        liq = r['liq']
-        lev = r.get('lev', 20)
-
-        price_data = prices.get(base)
-        if not price_data:
-            results.append({
-                'base': base,
-                'direction': direction,
-                'entry': entry,
-                'tp1': tp1,
-                'liq': liq,
-                'lev': lev,
-                'status': '未知',
-                'pnl_pct': 0,
-                'pnl_usdt': 0,
-                'current_price': None,
-            })
+    for rec in records:
+        recs = rec.get('recommendations', [])
+        if not recs:
             continue
+        total_recs += len(recs)
+        symbols = [r['base'] for r in recs]
+        prices = get_current_prices(symbols)
+        rec_time = rec.get('timestamp', 0)
+        elapsed = time.time() - rec_time
 
-        current = price_data['last']
+        for r in recs:
+            base = r['base']
+            direction = r['direction']
+            entry = r['entry']
+            tp1 = r['tp1']
+            liq = r['liq']
+            lev = r.get('lev', 20)
+            price_data = prices.get(base)
 
-        # 计算盈亏
-        if direction == 'short':
-            # 做空: 价格跌=盈利, 价格涨=亏损
-            pnl_pct = (entry - current) / entry * 100
-            pnl_usdt = (entry - current) / entry * 20 * lev  # 20U * 杠杆
-            # 判断状态
-            if current >= liq:
-                status = '爆仓'
-            elif current <= tp1:
-                status = '到TP1盈利'
-            elif current < entry:
-                status = '浮盈'
-            elif current > entry:
-                status = '浮亏'
+            if not price_data:
+                all_results.append({
+                    'base': base, 'direction': direction,
+                    'entry': entry, 'tp1': tp1, 'liq': liq, 'lev': lev,
+                    'status': '未知', 'pnl_pct': 0, 'pnl_usdt': 0,
+                    'current_price': None, 'elapsed': elapsed,
+                })
+                continue
+
+            current = price_data['last']
+            if direction == 'short':
+                pnl_pct = (entry - current) / entry * 100
+                pnl_usdt = (entry - current) / entry * 20 * lev
+                if current >= liq:
+                    status = '爆仓'; total_fail += 1
+                elif current <= tp1:
+                    status = '到TP1盈利'; total_ok += 1
+                elif current < entry:
+                    status = '浮盈'
+                elif current > entry:
+                    status = '浮亏'
+                else:
+                    status = '挂单'; total_pending += 1
             else:
-                status = '挂单'
-        else:
-            # 做多: 价格涨=盈利, 价格跌=亏损
-            pnl_pct = (current - entry) / entry * 100
-            pnl_usdt = (current - entry) / entry * 20 * lev
-            if current <= liq:
-                status = '爆仓'
-            elif current >= tp1:
-                status = '到TP1盈利'
-            elif current > entry:
-                status = '浮盈'
-            elif current < entry:
-                status = '浮亏'
-            else:
-                status = '挂单'
+                pnl_pct = (current - entry) / entry * 100
+                pnl_usdt = (current - entry) / entry * 20 * lev
+                if current <= liq:
+                    status = '爆仓'; total_fail += 1
+                elif current >= tp1:
+                    status = '到TP1盈利'; total_ok += 1
+                elif current > entry:
+                    status = '浮盈'
+                elif current < entry:
+                    status = '浮亏'
+                else:
+                    status = '挂单'; total_pending += 1
 
-        results.append({
-            'base': base,
-            'direction': direction,
-            'entry': entry,
-            'tp1': tp1,
-            'liq': liq,
-            'lev': lev,
-            'status': status,
-            'pnl_pct': round(pnl_pct, 2),
-            'pnl_usdt': round(pnl_usdt, 2),
-            'current_price': current,
-        })
+            all_results.append({
+                'base': base, 'direction': direction,
+                'entry': entry, 'tp1': tp1, 'liq': liq, 'lev': lev,
+                'status': status, 'pnl_pct': round(pnl_pct, 2),
+                'pnl_usdt': round(pnl_usdt, 2),
+                'current_price': current, 'elapsed': elapsed,
+            })
 
-    return results, time_str
+    summary = f'{label}: {total_recs}个推荐 | {total_ok}个到TP1 | {total_fail}个爆仓 | {total_pending}个挂单'
+    return all_results, summary
 
 
-def print_backtest(results: list, time_str: str):
+def backtest_last():
+    """回测最近3次推荐"""
+    records = get_recent_recommendations(3)
+    if not records:
+        return None, None
+    return backtest_records(records, "最近3次推荐")
+
+
+def backtest_today():
+    """回测当天所有推荐（12点用）"""
+    records = get_today_recommendations()
+    if not records:
+        return None, None
+    return backtest_records(records, f"今日汇总({len(records)}次)")
+
+
+def print_backtest(results: list, summary: str):
     """打印回测结果表格"""
     if not results:
         return
 
     print()
     print(f'  {"=" * 60}')
-    print(f'  ★ 上次推荐回测 (距推荐: {time_str})')
+    print(f'  ★ {summary}')
     print(f'  {"=" * 60}')
 
     for r in results:
         dir_cn = '做空' if r['direction'] == 'short' else '做多'
         status = r['status']
-        cp = r['current_price']
 
-        # 状态图标
         if status == '到TP1盈利':
             icon = '[OK]'
         elif status == '爆仓':
@@ -225,18 +229,27 @@ def print_backtest(results: list, time_str: str):
 
         pnl = r['pnl_usdt']
         pnl_pct = r['pnl_pct']
-        if status in ('到TP1盈利', '浮盈') or (status == '浮亏' and pnl < 0):
-            pnl_str = f'+${pnl:.2f} ({pnl_pct:+.2f}%)' if pnl >= 0 else f'-${abs(pnl):.2f} ({pnl_pct:+.2f}%)'
+        if status == '到TP1盈利':
+            pnl_str = f'+${abs(pnl):.2f} (+{abs(pnl_pct):.2f}%) TP1达成'
         elif status == '爆仓':
-            pnl_str = f'-${abs(pnl):.2f} (爆仓)'
+            pnl_str = f'-${abs(pnl):.2f} ({pnl_pct:+.2f}%) 爆仓'
+        elif status == '浮盈':
+            pnl_str = f'+${abs(pnl):.2f} ({pnl_pct:+.2f}%)'
+        elif status == '浮亏':
+            pnl_str = f'-${abs(pnl):.2f} ({pnl_pct:+.2f}%)'
         else:
-            pnl_str = f'{pnl:+.2f}USDT'
+            pnl_str = f'-- (挂单中)'
 
-        print(f'  {icon} {r["base"]:<6} {dir_cn}  入场={r["entry"]}  TP1={r["tp1"]}  强平={r["liq"]}')
-        print(f'     状态: {status}  {pnl_str}')
-        if cp:
-            print(f'     当前价: {cp:.4f}')
-        print()
+        elapsed = r.get('elapsed', 0)
+        if elapsed < 3600:
+            time_str = f'{elapsed/60:.0f}分'
+        elif elapsed < 86400:
+            time_str = f'{elapsed/3600:.1f}小时'
+        else:
+            time_str = f'{elapsed/86400:.1f}天'
+
+        print(f'  {icon} {r["base"]:<6} {dir_cn}  {time_str}  {pnl_str}')
+        print(f'     入场={r["entry"]}  当前={r.get("current_price","?")}  TP1={r["tp1"]}')
 
     print(f'  {"=" * 60}')
     print()
