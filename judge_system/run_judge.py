@@ -87,31 +87,73 @@ def fetch_coin_data(symbol: str, timeframe: str = '15m', limit: int = 200):
 
 def load_pagoda_results() -> dict:
     """加载锁妖塔的扫描结果"""
-    try:
-        path = os.path.join(PROJECT_ROOT, 'quant_factors', 'altcoin_5m_kol_ranking.json')
-        if os.path.exists(path):
-            with open(path, 'r') as f:
+    # 尝试从两个可能的输出文件加载
+    candidates = [
+        os.path.join(PROJECT_ROOT, 'quant_factors', 'altcoin_5m_kol_ranking.json'),
+        os.path.join(PROJECT_ROOT, 'quant_factors', 'daily_picks.json'),
+    ]
+
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            if not isinstance(data, list) or len(data) == 0:
+                continue
+
             results = {}
             for item in data:
                 symbol = item.get('base', '')
-                kol_long = item.get('kol_long', 0)
-                kol_short = item.get('kol_short', 0)
-                total = kol_long + kol_short
-                if total > 0:
-                    direction = 'long' if kol_long > kol_short else 'short'
-                    score = (kol_long - kol_short) / total * item.get('score', 5) / 5
+                if not symbol:
+                    continue
+
+                # 处理 altcoin_5m_kol_ranking.json 格式
+                if 'kol_long' in item and 'kol_short' in item:
+                    kol_long = item.get('kol_long', 0)
+                    kol_short = item.get('kol_short', 0)
+                    total = kol_long + kol_short
+                    if total > 0:
+                        direction = 'long' if kol_long > kol_short else 'short'
+                        score = (kol_long - kol_short) / total * (item.get('score', 5) or 5) / 5
+                    else:
+                        direction = 'neutral'
+                        score = 0
+                    detail = f"KOL: {kol_long}/{kol_short} ADX:{item.get('adx','?')}"
+                # 处理 daily_picks.json 格式
+                elif 'm5_bias' in item and 'daily_bias' in item:
+                    m5_dir = item.get('m5_bias', 'neutral')
+                    daily_dir = item.get('daily_bias', 'neutral')
+                    # 如果双周期一致，用日线方向
+                    if m5_dir == daily_dir:
+                        direction = daily_dir
+                    elif item.get('consistent'):
+                        direction = daily_dir
+                    else:
+                        direction = 'neutral'
+                    m5_l = item.get('m5_long', 0)
+                    m5_s = item.get('m5_short', 0)
+                    total = m5_l + m5_s
+                    score = ((m5_l - m5_s) / max(total, 1)) * (item.get('adx', 25) / 50) if total > 0 else 0
+                    detail = f"KOL: {m5_l}/{m5_s} ADX:{item.get('adx','?')} 一致:{item.get('consistent','?')}"
                 else:
-                    direction = 'neutral'
-                    score = 0
+                    continue
+
                 results[symbol] = {
                     'direction': direction,
                     'score': score,
-                    'detail': f"KOL: {kol_long}多/{kol_short}空",
+                    'detail': detail,
                 }
-            return results
-    except Exception as e:
-        print(f"[警告] 锁妖塔结果加载失败: {e}")
+
+            if results:
+                src = os.path.basename(path)
+                print(f"[审判系统] 已加载锁妖塔结果: {src} ({len(results)}币)")
+                return results
+
+        except Exception as e:
+            print(f"[警告] 加载 {path} 失败: {e}")
+
+    print("[审判系统] 未找到锁妖塔结果，将独立运行（无对比）")
     return {}
 
 
