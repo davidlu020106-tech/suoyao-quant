@@ -139,89 +139,60 @@ def load_pagoda_results() -> dict:
 
 
 def print_verdict_table(verdicts: dict, pagoda: dict, top_n: int = 20):
-    """
-    以锁妖塔风格输出审判结果表格
-    直接输出到 stdout，供锁妖塔调用
-    """
+    """以锁妖塔风格输出审判结果表格"""
     if not verdicts:
-        print("  [审判] 无数据")
+        print("  [审判] 无数据（所有币种数据获取失败）", flush=True)
         return
 
-    print()
-    print(f'  {"─" * 55}')
-    print(f'  ╔══ 审判系统验证 ═══════════════════════════╗')
-    print(f'  ║  5检测器: CVD背离/FVG缺口/多TF扫荡/      ║')
-    print(f'  ║           流动性级联/情绪震荡器           ║')
-    print(f'  ╚═══════════════════════════════════════════╝')
-    print(f'  {"─" * 55}')
+    print(flush=True)
+    print(f'  {"=" * 60}', flush=True)
+    print(f'  审判系统验证 - 5个独立检测器', flush=True)
+    print(f'  CVD背离 / FVG缺口 / 多TF扫荡 / 流动性级联 / 情绪震荡器', flush=True)
+    print(f'  {"=" * 60}', flush=True)
 
-    # 统计
     dis_count = sum(1 for v in verdicts.values() if v.disagreement)
     long_n = sum(1 for v in verdicts.values() if v.judge_direction == 'long')
     short_n = sum(1 for v in verdicts.values() if v.judge_direction == 'short')
     neutral_n = sum(1 for v in verdicts.values() if v.judge_direction == 'neutral')
-
     env = '偏多' if long_n > short_n * 2 else ('偏空' if short_n > long_n * 2 else '均衡')
-    print(f'  大盘环境: {env}  |  看多={long_n} 看空={short_n} 中性={neutral_n}')
+    print(f'  大盘环境: {env}  |  看多={long_n} 看空={short_n} 中性={neutral_n}', flush=True)
     if dis_count:
-        print(f'  ⚠️ 与锁妖塔分歧: {dis_count}币')
-    print(f'  {"─" * 55}')
+        print(f'  !! 与锁妖塔分歧: {dis_count}币', flush=True)
+    print(f'  {"-" * 60}', flush=True)
 
-    # ─── 做多推荐表 ───
+    # 看多
     longs = [(s, v) for s, v in verdicts.items() if v.judge_direction == 'long']
     if longs:
         longs.sort(key=lambda x: x[1].judge_score, reverse=True)
-        print(f'  ── 审判看多 ──')
-        print(f'  {"#":>3} {"币种":<8} {"评分":>7} {"置信":>5} {"分歧":>4}  CVD    FVG    MTF    级联   情绪')
-        print(f'  {"─" * 55}')
-        for i, (symbol, v) in enumerate(longs[:10], 1):
-            det = v.detector_results
-            def ds(name):
-                r = det.get(name)
-                if not r: return '  -  '
-                s = r.score
-                return f'{s:+.2f}' if abs(s) > 0.05 else '  -  '
-            dis = ' !!' if v.disagreement else '  -'
-            print(f'  {i:>3} {symbol:<8} {v.judge_score:>+7.3f} {v.judge_confidence:>5.2f} {dis:>4}'
-                  f'  {ds("cvd_divergence"):>6} {ds("fvg_detector"):>6} {ds("mtf_liquidity_sweep"):>6}'
-                  f'  {ds("liquidity_cascade"):>6} {ds("sentiment_oscillator"):>6}')
+        print(f'  ## 审判看多', flush=True)
+        for i, (symbol, v) in enumerate(longs[:8], 1):
+            dis = ' !!分歧' if v.disagreement else ''
+            print(f'  {i:>2}. {symbol:<6} 评分={v.judge_score:+.2f} 置信={v.judge_confidence:.2f}{dis}', flush=True)
 
-    # ─── 做空推荐表 ───
+    # 看空
     shorts = [(s, v) for s, v in verdicts.items() if v.judge_direction == 'short']
     if shorts:
         shorts.sort(key=lambda x: x[1].judge_score)
-        print(f'  ── 审判看空 ──')
-        print(f'  {"#":>3} {"币种":<8} {"评分":>7} {"置信":>5} {"分歧":>4}  CVD    FVG    MTF    级联   情绪')
-        print(f'  {"─" * 55}')
-        for i, (symbol, v) in enumerate(shorts[:10], 1):
-            det = v.detector_results
-            def ds(name):
-                r = det.get(name)
-                if not r: return '  -  '
-                s = r.score
-                return f'{s:+.2f}' if abs(s) > 0.05 else '  -  '
-            dis = ' !!' if v.disagreement else '  -'
-            print(f'  {i:>3} {symbol:<8} {v.judge_score:>+7.3f} {v.judge_confidence:>5.2f} {dis:>4}'
-                  f'  {ds("cvd_divergence"):>6} {ds("fvg_detector"):>6} {ds("mtf_liquidity_sweep"):>6}'
-                  f'  {ds("liquidity_cascade"):>6} {ds("sentiment_oscillator"):>6}')
+        print(f'  ## 审判看空', flush=True)
+        for i, (symbol, v) in enumerate(shorts[:8], 1):
+            dis = ' !!分歧' if v.disagreement else ''
+            print(f'  {i:>2}. {symbol:<6} 评分={v.judge_score:+.2f} 置信={v.judge_confidence:.2f}{dis}', flush=True)
 
-    # ─── 分歧详情 ───
+    # 分歧
     disagreements = [(s, v) for s, v in verdicts.items() if v.disagreement]
     if disagreements:
-        print(f'  {"─" * 55}')
-        print(f'  ⚠️ 分歧币种详情:')
+        print(f'  {"-" * 60}', flush=True)
+        print(f'  !! 分歧币种:', flush=True)
         for symbol, v in disagreements:
-            det_details = []
+            dets = []
             for n, d in v.detector_results.items():
                 if d.triggered or abs(d.score) > 0.1:
-                    det_details.append(f'{n.split("_")[0]}={d.direction[:1]}{d.score:.1f}')
-            print(f'    {symbol}: 锁妖塔={v.pagoda_direction} 审判={v.judge_direction}'
-                  f'  [{", ".join(det_details)}]')
+                    tag = n.split('_')[0] if '_' in n else n[:4]
+                    dets.append(f'{tag}={d.direction[:1]}{d.score:.1f}')
+            det_str = ', '.join(dets) if dets else '无显著信号'
+            print(f'    {symbol}: 锁妖塔={v.pagoda_direction} 审判={v.judge_direction} [{det_str}]', flush=True)
 
-    print(f'  {"─" * 55}')
-    print(f'  检测器说明: CVD=CVD背离  FVG=FVG缺口  MTF=多TF扫荡')
-    print(f'             级联=流动性级联  情绪=情绪震荡器')
-    print()
+    print(f'  {"=" * 60}', flush=True)
 
 
 def run_judge(top_n=40, coins=None, compare=True, save=False, table_only=False,
@@ -261,8 +232,8 @@ def run_judge(top_n=40, coins=None, compare=True, save=False, table_only=False,
     # 扫描每个币种
     verdicts = {}
     for i, symbol in enumerate(symbols, 1):
-        if not table_only:
-            print(f"\r  [审判] [{i}/{len(symbols)}] {symbol}...", end='', flush=True)
+        if not table_only and (i % 10 == 0 or i == 1):
+            print(f"  [审判] 扫描进度: {i}/{len(symbols)}", flush=True)
         
         # 优先复用预加载的数据
         if coins_data and symbol in coins_data:
