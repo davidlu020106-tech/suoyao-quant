@@ -620,6 +620,17 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'    - 最终推荐: {len(passed)}')
     print()
 
+    # ── 审判系统验证 ──
+    try:
+        from judge_system.run_judge import run_judge, ensure_detectors_registered
+        ensure_detectors_registered()
+        # 用扫描过的币种列表跑审判
+        coin_symbols = [c['base'] for c in results] if results else None
+        run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True)
+    except Exception as e:
+        print(f'  [审判] 跳过: {e}')
+    print()
+
     # ── 保存 ──
     op = os.path.join(QF, 'daily_picks.json')
     json.dump(passed, open(op, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
