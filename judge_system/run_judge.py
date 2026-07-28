@@ -196,7 +196,7 @@ def print_verdict_table(verdicts: dict, pagoda: dict, top_n: int = 20):
 
 
 def run_judge(top_n=40, coins=None, compare=True, save=False, table_only=False,
-              coins_data=None):
+              coins_data=None, print_verdict=True):
     """
     审判系统主函数 — 供外部调用
 
@@ -251,7 +251,7 @@ def run_judge(top_n=40, coins=None, compare=True, save=False, table_only=False,
         print()
 
     # 输出表格
-    if verdicts:
+    if verdicts and print_verdict:
         print_verdict_table(verdicts, pagoda_results)
 
     # 保存

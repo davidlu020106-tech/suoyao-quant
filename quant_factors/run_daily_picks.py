@@ -426,22 +426,6 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'  因子: {len(CAP_REGISTRY)} | 交易员: 99')
     print(f'  扫描: 前{top_n}币 | 过滤: R1≥{min_r1}% OI≥{min_oi/1e6:.1f}M')
 
-    # ── 回测上次推荐（最近3次）──
-    try:
-        from judge_system.backtest_log import init as bt_init, backtest_last, backtest_today, print_backtest
-        bt_init(QF)
-        # 整日回测（12点左右触发）
-        now_hour = datetime.now().hour
-        if 11 <= now_hour <= 13:
-            bt_results, bt_summary = backtest_today()
-            if bt_results:
-                print_backtest(bt_results, bt_summary)
-        # 每次运行都回测最近3次
-        bt_results, bt_summary = backtest_last()
-        if bt_results:
-            print_backtest(bt_results, bt_summary)
-    except Exception as e:
-        print(f'  [回测] 跳过: {e}')
 
     reg = CAP_REGISTRY; rids = set(reg.keys())
 
@@ -638,11 +622,25 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'    - 最终推荐: {len(passed)}')
     print()
 
-    # ── 审判系统验证（复用锁妖塔已拉取的K线数据）──
+    # ── 回测上次推荐（最近3次）──
+    try:
+        from judge_system.backtest_log import init as bt_init, backtest_last, backtest_today, print_backtest
+        bt_init(QF)
+        now_hour = datetime.now().hour
+        if 11 <= now_hour <= 13:
+            bt_results, bt_summary = backtest_today()
+            if bt_results:
+                print_backtest(bt_results, bt_summary)
+        bt_results, bt_summary = backtest_last()
+        if bt_results:
+            print_backtest(bt_results, bt_summary)
+    except Exception as e:
+        print(f'  [回测] 跳过: {e}')
+
+    # ── 综合推荐 + 精准入场（在审判之前，是最终结论）──
     try:
         from judge_system.run_judge import run_judge, ensure_detectors_registered
         ensure_detectors_registered()
-        # 从扫描结果中提取15m K线数据，避免重复拉取
         coins_data = {}
         for r in results:
             if 'df_15m' in r:
@@ -661,7 +659,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 coins_data[r['base']] = df
         coin_symbols = [c['base'] for c in coins_list] if coins_list else None
         verdicts, dis_count = run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True,
-                                        coins_data=coins_data)
+                                        coins_data=coins_data, print_verdict=False)
 
         # ── 综合推荐：锁妖塔 + 审判系统 ──
         if verdicts and passed:
@@ -768,6 +766,13 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 save_recommendation(rec_data)
             except:
                 pass
+
+        # ── 审判系统验证表（放在最后供参考）──
+        if verdicts:
+            from judge_system.run_judge import print_verdict_table
+            from judge_system.run_judge import load_pagoda_results
+            pagoda_results = load_pagoda_results()
+            print_verdict_table(verdicts, pagoda_results)
 
     except Exception as e:
         print(f'  [审判] 跳过: {e}')
