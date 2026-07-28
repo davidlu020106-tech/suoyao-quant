@@ -710,6 +710,29 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             print(f'  {"=" * 60}')
             print()
 
+            # ── 精准入场方案 ──
+            for c in valid[:3]:
+                base = c['base']
+                # 从 results 里找对应的 OHLC 数据
+                r = next((x for x in results if x['base'] == base), None)
+                if r and 'df_15m' in r:
+                    import pandas as _pd
+                    raw = r['df_15m']
+                    df = _pd.DataFrame(raw)
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        if col in df.columns:
+                            df[col] = _pd.to_numeric(df[col], errors='coerce')
+                    if 'timestamp' not in df.columns and 'date' in df.columns:
+                        df['timestamp'] = _pd.to_datetime(df['date'])
+                    if 'timestamp' in df.columns:
+                        df = df.sort_values('timestamp').reset_index(drop=True)
+
+                    from judge_system.entry_planner import plan_entry, print_entry_plan
+                    plan = plan_entry(base, c['direction'], c['entry'],
+                                      r.get('okx_lev', 20), df)
+                    print(f'  --- 精准入场: {base} ---')
+                    print_entry_plan(plan)
+
     except Exception as e:
         print(f'  [审判] 跳过: {e}')
     print()
