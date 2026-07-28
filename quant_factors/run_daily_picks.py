@@ -671,16 +671,27 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
 
                 # 锁妖塔评分（归一化到0~1）
                 p_score = min(r['adx'] / 50, 1.0) * 0.5 + min(r['tp1_profit'] / 500, 1.0) * 0.5
-                p_dir = r['direction']  # 'long' or 'short'
+                p_dir = r['direction']
+
+                # 反转向量 + 趋势强度
+                rv_score = 0.0
+                ts_score = 0.0
+                df_coin = coins_data.get(base)
+                if df_coin is not None:
+                    from judge_system.entry_planner import check_reversal_vector, check_trend_strength
+                    rv = check_reversal_vector(df_coin, r['entry'], p_dir)
+                    rv_score = rv.get('score', 0)
+                    ts = check_trend_strength(df_coin, p_dir)
+                    ts_score = max(0, min(ts.get('strength', 0) / 4, 1.0))  # 归一化
 
                 if v and abs(v.judge_score) > 0.1:
-                    # 审判系统有明确信号
                     j_dir = v.judge_direction
                     j_score = abs(v.judge_score)
 
                     if p_dir == j_dir:
-                        # 方向一致 → 强推荐
-                        final_score = p_score * 0.4 + j_score * 0.6
+                        # 方向一致 → 四维综合评分
+                        final_score = (p_score * 0.2 + j_score * 0.3 +
+                                       rv_score * 0.25 + ts_score * 0.25)
                         tag = '✅一致'
                     else:
                         # 方向相反 → 不推荐
