@@ -622,21 +622,6 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'    - 最终推荐: {len(passed)}')
     print()
 
-    # ── 回测上次推荐（最近3次）──
-    try:
-        from judge_system.backtest_log import init as bt_init, backtest_last, backtest_today, print_backtest
-        bt_init(QF)
-        now_hour = datetime.now().hour
-        if 11 <= now_hour <= 13:
-            bt_results, bt_summary = backtest_today()
-            if bt_results:
-                print_backtest(bt_results, bt_summary)
-        bt_results, bt_summary = backtest_last()
-        if bt_results:
-            print_backtest(bt_results, bt_summary)
-    except Exception as e:
-        print(f'  [回测] 跳过: {e}')
-
     # ── 综合推荐 + 精准入场（在审判之前，是最终结论）──
     try:
         from judge_system.run_judge import run_judge, ensure_detectors_registered
@@ -766,6 +751,21 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 save_recommendation(rec_data)
             except:
                 pass
+
+        # ── 回测上次推荐（最近3次）──
+        try:
+            from judge_system.backtest_log import init as bt_init, backtest_last, backtest_today, print_backtest
+            bt_init(QF)
+            now_hour = datetime.now().hour
+            if 11 <= now_hour <= 13:
+                bt_results, bt_summary = backtest_today()
+                if bt_results:
+                    print_backtest(bt_results, bt_summary)
+            bt_results, bt_summary = backtest_last()
+            if bt_results:
+                print_backtest(bt_results, bt_summary)
+        except Exception as e:
+            print(f'  [回测] 跳过: {e}')
 
         # ── 审判系统验证表（放在最后供参考）──
         if verdicts:
