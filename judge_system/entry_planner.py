@@ -150,12 +150,11 @@ def plan_entry(base: str, direction: str, market_price: float,
     turtle = calc_turtle_pullback(df, direction, pullback_pct=1.0)
 
     if direction == 'short':
-        # 做空: 第二入场在 entry1 和 liq_price 之间
-        # ICT OTE: fib_618 ~ fib_705 (价格反弹到这个区间)
+        # 做空: 第二入场在 entry1 和 liq_price 之间（价格反弹补仓）
         ote_entry = ote['fib_618']
 
-        # 取 ICT OTE 和海龟回撤中较低者（更安全）
-        candidate = min(ote_entry, turtle) if ote_entry else turtle
+        # 取 ICT OTE 和海龟回撤中较高者（做空要更高价才补）
+        candidate = max(ote_entry, turtle) if ote_entry else turtle
 
         # 硬约束: 必须在 [entry1 + 0.1%, liq_price * 0.98] 之间
         lower = entry1 * 1.001
@@ -163,17 +162,17 @@ def plan_entry(base: str, direction: str, market_price: float,
         entry2 = np.clip(candidate, lower, upper)
         entry2 = round(entry2, 8)
 
-        # 检测用了哪个策略
         if abs(entry2 - ote_entry) < abs(entry2 - turtle):
             detail_parts.append(f"ICT OTE={ote_entry}")
         else:
             detail_parts.append(f"海龟回撤={turtle}")
 
     else:
-        # 做多: 第二入场在 liq_price 和 entry1 之间
+        # 做多: 第二入场在 liq_price 和 entry1 之间（价格回落补仓）
         ote_entry = ote['fib_705']
 
-        candidate = max(ote_entry, turtle) if ote_entry else turtle
+        # 取 ICT OTE 和海龟回撤中较低者（做多要更低价才补）
+        candidate = min(ote_entry, turtle) if ote_entry else turtle
 
         lower = liq_price * 1.02
         upper = entry1 * 0.999
@@ -187,10 +186,10 @@ def plan_entry(base: str, direction: str, market_price: float,
 
     # ── 4. 风控检查 ──
     if direction == 'short':
-        safe = entry2 < liq_price * 0.98
+        safe = entry2 < liq_price * 0.99
         safe_dist = (liq_price - entry2) / liq_price * 100
     else:
-        safe = entry2 > liq_price * 1.02
+        safe = entry2 > liq_price * 1.01
         safe_dist = (entry2 - liq_price) / liq_price * 100
 
     if safe:
