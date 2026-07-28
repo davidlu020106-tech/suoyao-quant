@@ -631,11 +631,16 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             if 'df_15m' in r:
                 import pandas as pd
                 raw = r['df_15m']
+                # raw 是 dict 列表，直接转 DataFrame 即可
                 df = pd.DataFrame(raw)
-                df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'vol_currency']
+                # 确保需要的列存在
                 for col in ['open', 'high', 'low', 'close', 'volume']:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-                df = df.sort_values('timestamp').reset_index(drop=True)
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                if 'timestamp' not in df.columns and 'date' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['date'])
+                if 'timestamp' in df.columns:
+                    df = df.sort_values('timestamp').reset_index(drop=True)
                 coins_data[r['base']] = df
         coin_symbols = [c['base'] for c in coins_list] if coins_list else None
         run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True,
