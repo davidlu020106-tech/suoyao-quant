@@ -16,6 +16,7 @@ import sys, os, json, urllib.request, time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
+from io import StringIO
 from collections import OrderedDict
 
 QF = os.path.dirname(os.path.abspath(__file__))
@@ -424,6 +425,12 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'  ║   {now_str_short}                 ║')
     print('  ╚══════════════════════════════════════╝')
     print(f'  因子: {len(CAP_REGISTRY)} | 交易员: 99')
+
+    # 将锁妖塔扫描详情存入缓冲区，等重要的结论先出
+    _buf = StringIO()
+    _old_stdout = sys.stdout
+    sys.stdout = _buf
+
     print(f'  扫描: 前{top_n}币 | 过滤: R1≥{min_r1}% OI≥{min_oi/1e6:.1f}M')
 
 
@@ -622,6 +629,10 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'    - 最终推荐: {len(passed)}')
     print()
 
+    # 恢复 stdout，保存扫描输出到变量
+    sys.stdout = _old_stdout
+    _scan_output = _buf.getvalue()
+
     # ── 综合推荐 + 精准入场（在审判之前，是最终结论）──
     try:
         from judge_system.run_judge import run_judge, ensure_detectors_registered
@@ -767,6 +778,9 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         except Exception as e:
             print(f'  [回测] 跳过: {e}')
 
+        # ── 锁妖塔扫描详情（放在结论之后）──
+        # 将在 finally 块中统一打印
+
         # ── 审判系统验证表（放在最后供参考）──
         if verdicts:
             from judge_system.run_judge import print_verdict_table
@@ -776,6 +790,12 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
 
     except Exception as e:
         print(f'  [审判] 跳过: {e}')
+    finally:
+        # 确保 stdout 恢复，扫描详情打印
+        if '_old_stdout' in locals():
+            sys.stdout = _old_stdout
+        if '_scan_output' in locals():
+            print(_scan_output)
     print()
 
     # ── 保存 ──
