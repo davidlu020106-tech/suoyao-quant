@@ -479,6 +479,20 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     passed = [r for r in results if r['consistent'] and r['adx'] >= 25 and r['tp1_profit'] >= 100]
     short_ok = [r for r in passed if r['direction'] == 'short']
     long_ok = [r for r in passed if r['direction'] == 'long']
+
+    # ── 大盘环境过滤 ──
+    consistent_results = [r for r in results if r['consistent']]
+    long_count = sum(1 for r in consistent_results if r['direction'] == 'long')
+    short_count = sum(1 for r in consistent_results if r['direction'] == 'short')
+    if short_count >= long_count * 2 and short_count >= 3:
+        long_ok = []  # 市场偏空，不做多
+        market_env = '🔴 市场偏空'
+    elif long_count >= short_count * 2 and long_count >= 3:
+        short_ok = []  # 市场偏多，不做空
+        market_env = '🟢 市场偏多'
+    else:
+        market_env = '⚪ 市场均衡'
+
     short_ok.sort(key=lambda r: r['tp1_profit'], reverse=True)
     long_ok.sort(key=lambda r: r['tp1_profit'], reverse=True)
 
@@ -528,7 +542,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
 
     # ── 推荐 (严格过滤 TOP3) ──
     print(f'  {sep}')
-    print(f'  ★ 今日推荐 (方向一致 + ADX≥25 + TP1利润≥100%)')
+    print(f'  ★ 今日推荐 {market_env}')
     print(f'  {now_str}')
     print(f'  {sep}')
     print()
@@ -641,7 +655,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
 
     # 保存Word文档
     try:
-        save_to_docx(passed, short_ok, long_ok, results, len(coins_list), len(results), now_str, QF)
+        save_to_docx(passed, short_ok, long_ok, results, len(coins_list), len(results), now_str, QF, market_env)
     except Exception as e:
         print(f'  Word生成跳过: {e}')
     print()
@@ -649,7 +663,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     return passed
 
 
-def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_passed, now_str, QF):
+def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_passed, now_str, QF, market_env=''):
     """生成Word交易报告 (横板)"""
     from docx import Document
     from docx.shared import Inches, Pt, Cm, RGBColor
@@ -670,7 +684,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
     section.bottom_margin = Cm(1.5)
 
     # ── 区块1：报告头 ──
-    title = doc.add_heading('锁妖塔每日交易报告', level=0)
+    title = doc.add_heading(f'锁妖塔每日交易报告 {market_env}', level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
