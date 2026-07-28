@@ -120,10 +120,15 @@ def plan_entry(base: str, direction: str, market_price: float,
         }
     """
     # ── 1. 强平价 & TP1 ──
-    liq_price = market_price * (1 + 1/max_lev) if direction == 'short' else \
-                market_price * (1 - 1/max_lev)
-    tp1_price = market_price * (1 - 1/max_lev) if direction == 'short' else \
-                market_price * (1 + 1/max_lev)
+    # 实际强平只有理论差幅的70%（维持保证金占用）
+    # 理论差幅 = 1/lev，实际差幅 = 1/lev * 0.7
+    lev_pct = 1.0 / max_lev
+    actual_pct = lev_pct * 0.7  # 实际强平幅度只有理论的70%
+
+    liq_price = market_price * (1 + actual_pct) if direction == 'short' else \
+                market_price * (1 - actual_pct)
+    tp1_price = market_price * (1 - lev_pct) if direction == 'short' else \
+                market_price * (1 + lev_pct)
 
     detail_parts = []
 
@@ -152,16 +157,14 @@ def plan_entry(base: str, direction: str, market_price: float,
     if direction == 'short':
         # 做空: 第二入场在 entry1 和 liq_price 之间（价格反弹补仓）
         ote_entry = ote['fib_618']
-
-        # 取 ICT OTE 和海龟回撤中较高者（做空要更高价才补）
         candidate = max(ote_entry, turtle) if ote_entry else turtle
-
-        # 硬约束: 必须在 [entry1 + 0.1%, liq_price * 0.98] 之间
         lower = entry1 * 1.001
-        upper = liq_price * 0.98
-        entry2 = np.clip(candidate, lower, upper)
+        upper = liq_price * 0.99  # 与风控阈值一致
+        if lower < upper:
+            entry2 = np.clip(candidate, lower, upper)
+        else:
+            entry2 = (entry1 + liq_price) / 2  # 空间不够时取中点
         entry2 = round(entry2, 8)
-
         if abs(entry2 - ote_entry) < abs(entry2 - turtle):
             detail_parts.append(f"ICT OTE={ote_entry}")
         else:
@@ -170,13 +173,13 @@ def plan_entry(base: str, direction: str, market_price: float,
     else:
         # 做多: 第二入场在 liq_price 和 entry1 之间（价格回落补仓）
         ote_entry = ote['fib_705']
-
-        # 取 ICT OTE 和海龟回撤中较低者（做多要更低价才补）
         candidate = min(ote_entry, turtle) if ote_entry else turtle
-
-        lower = liq_price * 1.02
+        lower = liq_price * 1.01  # 与风控阈值一致
         upper = entry1 * 0.999
-        entry2 = np.clip(candidate, lower, upper)
+        if lower < upper:
+            entry2 = np.clip(candidate, lower, upper)
+        else:
+            entry2 = (liq_price + entry1) / 2  # 空间不够时取中点
         entry2 = round(entry2, 8)
 
         if abs(entry2 - ote_entry) < abs(entry2 - turtle):
@@ -236,7 +239,11 @@ def print_entry_plan(plan: dict):
 
     print(f'  [{dir_cn}] {plan["base"]} ({plan["max_lev"]}x)')
     print(f'    杠杆: {plan["max_lev"]}x (OKX最大)')
-    print(f'    强平价: {fmt_price(plan["liq_price"])} ({1/plan["max_lev"]*100:.1f}% {"涨" if d=="short" else "跌"}爆)')
+    print(f'    杠杆: {plan["max_lev"]}x (OKX最大)')
+    liq_dir = '涨爆' if d == 'short' else '跌爆'
+    print(f'    强平价: {fmt_price(plan["liq_price"])} ({1/plan["max_lev"]*100*0.7:.1f}% {liq_dir})')
+    tp_dir = '跌' if d == 'short' else '涨'
+    print(f'    TP1:   {fmt_price(plan["tp1_price"])} ({1/plan["max_lev"]*100:.1f}% {tp_dir} = 利润=本金)')
     print(f'    TP1:   {fmt_price(plan["tp1_price"])} ({1/plan["max_lev"]*100:.1f}% {"跌" if d=="short" else "涨"} = 利润=本金)')
     print(f'    {"─" * 40}')
     print(f'    第一入场: {fmt_price(plan["entry1_price"])} → 挂限价{plan["entry1_amount"]}U (市价+0.2%)')
