@@ -643,8 +643,73 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                     df = df.sort_values('timestamp').reset_index(drop=True)
                 coins_data[r['base']] = df
         coin_symbols = [c['base'] for c in coins_list] if coins_list else None
-        run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True,
-                  coins_data=coins_data)
+        verdicts, dis_count = run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True,
+                                        coins_data=coins_data)
+
+        # ── 综合推荐：锁妖塔 + 审判系统 ──
+        if verdicts and passed:
+            print(f'  {"=" * 60}')
+            print(f'  ★ 综合推荐 Top 3 — 锁妖塔 + 审判系统融合')
+            print(f'  {"=" * 60}')
+
+            # 对每个通过的推荐，综合评分
+            combined = []
+            for r in passed:
+                base = r['base']
+                v = verdicts.get(base)
+
+                # 锁妖塔评分（归一化到0~1）
+                p_score = min(r['adx'] / 50, 1.0) * 0.5 + min(r['tp1_profit'] / 500, 1.0) * 0.5
+                p_dir = r['direction']  # 'long' or 'short'
+
+                if v and abs(v.judge_score) > 0.1:
+                    # 审判系统有明确信号
+                    j_dir = v.judge_direction
+                    j_score = abs(v.judge_score)
+
+                    if p_dir == j_dir:
+                        # 方向一致 → 强推荐
+                        final_score = p_score * 0.4 + j_score * 0.6
+                        tag = '✅一致'
+                    else:
+                        # 方向相反 → 不推荐
+                        final_score = -1.0
+                        tag = '❌分歧'
+                else:
+                    # 审判系统无信号，只用锁妖塔
+                    final_score = p_score * 0.5
+                    tag = '⚪仅锁妖塔'
+
+                combined.append({
+                    'base': base,
+                    'direction': p_dir,
+                    'score': final_score,
+                    'tag': tag,
+                    'entry': r['entry'],
+                    'tp1': r['r1'] if p_dir == 'long' else r['s2'],
+                    'adx': r['adx'],
+                    'kol': f'{r["m5_long"]}/{r["m5_short"]}',
+                })
+
+            # 过滤掉分歧的，按综合评分排序
+            valid = [c for c in combined if c['score'] > 0]
+            valid.sort(key=lambda x: x['score'], reverse=True)
+
+            for i, c in enumerate(valid[:3], 1):
+                dir_arrow = '🟢做多' if c['direction'] == 'long' else '🔴做空'
+                print(f'  {i}. {c["base"]:<6} {dir_arrow}  '
+                      f'评分={c["score"]:.2f}  ADX={c["adx"]:.0f}  '
+                      f'入场={fmt_price(c["entry"])}  TP1={fmt_price(c["tp1"])}  '
+                      f'KOL={c["kol"]}  {c["tag"]}')
+
+            disagreements = [c for c in combined if c['score'] < 0]
+            if disagreements:
+                print(f'  {"-" * 60}')
+                print(f'  ⚠️ 分歧排除: {", ".join(c["base"] for c in disagreements)}')
+
+            print(f'  {"=" * 60}')
+            print()
+
     except Exception as e:
         print(f'  [审判] 跳过: {e}')
     print()
