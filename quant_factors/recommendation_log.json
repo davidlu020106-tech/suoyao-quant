@@ -1,0 +1,16 @@
+[
+  {
+    "date": "2026-07-28 16:48",
+    "timestamp": 1785228495.0020463,
+    "recommendations": [
+      {
+        "base": "HYPE",
+        "direction": "short",
+        "entry": 55.235,
+        "tp1": 51.11300000000001,
+        "liq": 56.00829,
+        "lev": 50
+      }
+    ]
+  }
+]
