@@ -67,7 +67,7 @@ def fetch_coin_data(symbol: str, timeframe: str = '15m', limit: int = 200):
     """获取单个币种数据"""
     try:
         from okx_data_adapter import fetch_ohlc
-        raw = fetch_ohlc(f"{symbol}USDT", timeframe, limit)
+        raw = fetch_ohlc(f"{symbol}-USDT", timeframe, limit)
         if raw and len(raw) >= 50:
             import pandas as pd
             df = pd.DataFrame(raw)

@@ -624,8 +624,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     try:
         from judge_system.run_judge import run_judge, ensure_detectors_registered
         ensure_detectors_registered()
-        # 用扫描过的币种列表跑审判
-        coin_symbols = [c['base'] for c in results] if results else None
+        # 传全部扫描过的币种，而不是仅过滤通过的
+        coin_symbols = [c['base'] for c in coins_list] if coins_list else None
         run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True)
     except Exception as e:
         print(f'  [审判] 跳过: {e}')
