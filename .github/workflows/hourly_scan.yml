@@ -34,20 +34,36 @@ jobs:
         run: |
           python quant_factors/run_daily_picks.py --top 40 --min-r1 1.5 2>&1 | tee output.log
 
+      - name: 运行审判系统
+        env:
+          OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
+          OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
+          OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
+          TZ: Asia/Shanghai
+        run: |
+          python judge_system/run_judge.py --top 40 --compare --save 2>&1 | tee judge_output.log
+
       - name: 上传Word报告
         uses: actions/upload-artifact@v4
         with:
           name: daily_picks_${{ github.run_id }}
           path: quant_factors/daily_picks_*.docx
-          retention-days: 7  # 保留7天
+          retention-days: 7
 
       - name: 上传JSON数据
         uses: actions/upload-artifact@v4
         with:
-          name: daily_picks_json_${{ github.run_id }}
-          path: quant_factors/daily_picks.json
+          name: data_${{ github.run_id }}
+          path: |
+            quant_factors/daily_picks.json
+            quant_factors/judge_verdict.json
           retention-days: 7
 
-      - name: 输出完整结果到运行页面
+      - name: 输出综合结果到运行页面
         run: |
+          echo "## 锁妖塔扫描结果" >> $GITHUB_STEP_SUMMARY
           cat output.log >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "## 审判系统结果" >> $GITHUB_STEP_SUMMARY
+          cat judge_output.log >> $GITHUB_STEP_SUMMARY
