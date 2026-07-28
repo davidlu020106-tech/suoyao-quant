@@ -53,3 +53,11 @@ jobs:
       - name: 输出综合结果到运行页面
         run: |
           cat output.log >> $GITHUB_STEP_SUMMARY
+
+      - name: 提交回测日志
+        run: |
+          git config user.name "suoyao-bot"
+          git config user.email "bot@suoyao.quant"
+          git add quant_factors/recommendation_log.json
+          git diff --cached --quiet || git commit -m "chore: 更新推荐回测日志 [skip ci]"
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
