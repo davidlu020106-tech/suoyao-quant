@@ -852,37 +852,40 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                     else:
                         ts_score = max(0, ts_raw / 4)
 
-                if v and v.judge_direction != 'neutral':
+                if v and abs(v.judge_score) > 0.05:
                     j_dir = v.judge_direction
-                    j_score = max(0.1, v.judge_confidence)  # 保底0.1, 方向匹配就用
+                    j_score = v.judge_confidence  # 门槛用score, 权重用confidence
+
+                    # pos_score_val 提前计算 (方向一致和分歧分支都要用)
+                    pos_score_val = 0.0
+                    if p_dir == 'long':
+                        pos_score_val = max(0, (50 - r.get('pos_score', 50)) / 25)
+                    else:
+                        pos_score_val = max(0, (r.get('pos_score', 50) - 50) / 25)
+                    pos_score_val = min(1.0, pos_score_val)
 
                     if p_dir == j_dir:
                         if ts_score < 0:
                             final_score = -1.0
                             tag = '❌逆势'
                         else:
-                            # 四维综合: 锁妖塔35% + 审判30% + 趋势20% + 位置15%
-                            pos_score_val = 0.0
-                            if p_dir == 'long':
-                                pos_score_val = max(0, (50 - r.get('pos_score', 50)) / 25)
-                            else:
-                                pos_score_val = max(0, (r.get('pos_score', 50) - 50) / 25)
-                            pos_score_val = min(1.0, pos_score_val)
-                            final_score = (p_score * 0.35 + j_score * 0.30 +
+                            # 四维综合: 锁妖塔40% + 审判25% + 趋势20% + 位置15%
+                            final_score = (p_score * 0.40 + j_score * 0.25 +
                                            ts_score * 0.20 + pos_score_val * 0.15)
                             pos_grade = r.get('pos_grade', 'C')
                             if pos_grade in ('D', 'F'):
                                 tag = f'⚠️一致(位置{pos_grade}级)'
-                                final_score *= 0.3   # ★ 位置严重冲突 → 扣70%
+                                final_score *= 0.3
                             elif pos_grade == 'C':
                                 tag = '✅一致'
-                            else:  # A or B
+                            else:
                                 tag = '✅一致'
-                                final_score *= 1.05  # 位置支持方向 → 小幅奖励
+                                final_score *= 1.05
                     else:
-                        # 方向相反 → 不推荐
-                        final_score = -1.0
-                        tag = '❌分歧'
+                        # 方向相反 → 降权而非淘汰
+                        final_score = (p_score * 0.40 + ts_score * 0.30 +
+                                       pos_score_val * 0.30) * 0.5
+                        tag = '⚠️分歧(锁妖塔为主)'
                 else:
                     # 审判系统无信号，只用锁妖塔
                     final_score = p_score * 0.5
