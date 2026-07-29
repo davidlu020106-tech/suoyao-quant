@@ -676,6 +676,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 # 反转向量 + 趋势强度
                 rv_score = 0.0
                 ts_score = 0.0
+                ts = None
                 df_coin = coins_data.get(base)
                 if df_coin is not None:
                     from judge_system.entry_planner import check_reversal_vector, check_trend_strength
@@ -689,10 +690,16 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                     j_score = abs(v.judge_score)
 
                     if p_dir == j_dir:
-                        # 方向一致 → 四维综合评分
-                        final_score = (p_score * 0.2 + j_score * 0.3 +
-                                       rv_score * 0.25 + ts_score * 0.25)
-                        tag = '✅一致'
+                        # 趋势方向检查：趋势强度≤0 → 逆势，不推荐
+                        ts_raw = ts.get('strength', 0) if ts is not None else 0
+                        if ts_raw <= 0.2:
+                            final_score = -1.0
+                            tag = '❌逆势'
+                        else:
+                            # 方向一致 + 趋势正确 → 四维综合评分
+                            final_score = (p_score * 0.2 + j_score * 0.3 +
+                                           rv_score * 0.25 + ts_score * 0.25)
+                            tag = '✅一致'
                     else:
                         # 方向相反 → 不推荐
                         final_score = -1.0
