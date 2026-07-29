@@ -928,7 +928,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 print(f'  {i}. {c["base"]:<6} {dir_arrow}  '
                       f'评分={c["score"]:.2f}  ADX={c["adx"]:.0f}  '
                       f'价格={fmt_price(c["entry"])}  位置={pos_str}  '
-                      f'TP1={fmt_price(c["tp1"])}  '
+                      f'TP1={fmt_price(c["tp1"])}  {align_str}  '
                       f'{c["tag"]}')
 
             disagreements = [c for c in combined if c['score'] < 0]
