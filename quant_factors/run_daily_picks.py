@@ -340,19 +340,6 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     if adx >= 25: tp1_score += 3
     elif adx >= 12: tp1_score += 1
 
-    # ── 日线 ──
-    cdl_daily = fetch_ohlc(sym, '1D', 200)
-    daily_avg = 0.0
-    daily_ln = daily_sn = 0
-    if len(cdl_daily) >= 20:
-        df_d = pd.DataFrame(cdl_daily)
-        df_d['date'] = pd.to_datetime(df_d['date'])
-        df_d = df_d.set_index('date').sort_index()
-        feats_d = build_features_single(df_d)
-        lat_d = feats_d.iloc[-1]
-        daily_ln, daily_sn, _, daily_avg = kol_vote(lat_d, reg, rids, profs, fr, oi)
-        time.sleep(0.15)  # 控制API频率
-
     # 方向一致性
     m5_bias = 'long' if m5_avg > 0.01 else ('short' if m5_avg < -0.01 else 'neutral')
     daily_bias = 'long' if daily_avg > 0.01 else ('short' if daily_avg < -0.01 else 'neutral')
@@ -645,18 +632,9 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         coins_data = {}
         for r in results:
             if 'df_15m' in r:
-                import pandas as pd
+                from okx_data_adapter import normalize_ohlc_df
                 raw = r['df_15m']
-                # raw 是 dict 列表，直接转 DataFrame 即可
-                df = pd.DataFrame(raw)
-                # 确保需要的列存在
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-                if 'timestamp' not in df.columns and 'date' in df.columns:
-                    df['timestamp'] = pd.to_datetime(df['date'])
-                if 'timestamp' in df.columns:
-                    df = df.sort_values('timestamp').reset_index(drop=True)
+                df = normalize_ohlc_df(raw)
                 coins_data[r['base']] = df
         coin_symbols = [c['base'] for c in coins_list] if coins_list else None
         verdicts, dis_count = run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True,
@@ -688,7 +666,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                     rv = check_reversal_vector(df_coin, r['entry'], p_dir)
                     rv_score = rv.get('score', 0)
                     ts = check_trend_strength(df_coin, p_dir)
-                    ts_score = max(0, min(ts.get('strength', 0) / 4, 1.0))  # 归一化
+                    ts_score = max(0, ts.get('strength', 0) / 4)  # ★ 修复: strength已方向对齐, 逆势=0
 
                 if v and abs(v.judge_score) > 0.1:
                     j_dir = v.judge_direction
@@ -750,16 +728,9 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 # 从 results 里找对应的 OHLC 数据
                 r = next((x for x in results if x['base'] == base), None)
                 if r and 'df_15m' in r:
-                    import pandas as _pd
+                    from okx_data_adapter import normalize_ohlc_df
                     raw = r['df_15m']
-                    df = _pd.DataFrame(raw)
-                    for col in ['open', 'high', 'low', 'close', 'volume']:
-                        if col in df.columns:
-                            df[col] = _pd.to_numeric(df[col], errors='coerce')
-                    if 'timestamp' not in df.columns and 'date' in df.columns:
-                        df['timestamp'] = _pd.to_datetime(df['date'])
-                    if 'timestamp' in df.columns:
-                        df = df.sort_values('timestamp').reset_index(drop=True)
+                    df = normalize_ohlc_df(raw)
 
                     from judge_system.entry_planner import plan_entry, print_entry_plan
                     plan = plan_entry(base, c['direction'], c['entry'],

@@ -66,16 +66,10 @@ def fetch_coin_list(top_n: int) -> list:
 def fetch_coin_data(symbol: str, timeframe: str = '15m', limit: int = 200):
     """获取单个币种数据"""
     try:
-        from okx_data_adapter import fetch_ohlc
+        from okx_data_adapter import fetch_ohlc, normalize_ohlc_df
         raw = fetch_ohlc(f"{symbol}-USDT", timeframe, limit)
         if raw and len(raw) >= 50:
-            import pandas as pd
-            df = pd.DataFrame(raw)
-            df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'vol_currency']
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            df = df.sort_values('timestamp').reset_index(drop=True)
-            return df
+            return normalize_ohlc_df(raw)
     except Exception as e:
         pass
     return None

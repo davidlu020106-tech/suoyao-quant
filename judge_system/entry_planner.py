@@ -319,32 +319,35 @@ def check_trend_strength(df: pd.DataFrame, direction: str) -> dict:
     atr_pct = atr / close[-1] if close[-1] != 0 else 0.01
 
     # 趋势强度 = (ema7 - ema90) / (atr / close) = (快慢均线差) / (波动率%)
+    # ★ 修复: 保留raw_strength(原始方向), aligned_strength按方向对齐(正=顺势)
     diff_pct = (ema7[-1] - ema90[-1]) / ema90[-1]
-    strength = diff_pct / atr_pct if atr_pct > 0 else 0
+    raw_strength = diff_pct / atr_pct if atr_pct > 0 else 0
 
-    if direction == 'short':
-        # 做空看负趋势（ema7 < ema90）
-        strength = -strength
+    if direction == 'long':
+        aligned = raw_strength    # 正值=ema7>ema90=多头趋势
+    else:
+        aligned = -raw_strength   # 正值=ema7<ema90=空头趋势
 
     # TP1和强平需要多少根K线
     lev_pct = 0.02  # 50x杠杆约2%（标准参考值）
     tp1_candles = lev_pct / atr_pct if atr_pct > 0 else 99
     liq_candles = (lev_pct * 0.7) / atr_pct if atr_pct > 0 else 99
 
-    # 评级
-    if strength > 2.0:
+    # 评级 (基于aligned方向对齐值)
+    if aligned > 2.0:
         grade = '趋势极强'
-    elif strength > 1.0:
+    elif aligned > 1.0:
         grade = '趋势强'
-    elif strength > 0.5:
+    elif aligned > 0.5:
         grade = '趋势中'
-    elif strength > 0.2:
+    elif aligned > 0.2:
         grade = '趋势弱'
     else:
-        grade = '无趋势或方向不符'
+        grade = '逆势'
 
     return {
-        'strength': round(strength, 3),
+        'strength': round(aligned, 3),           # ★ 方向对齐: 正=顺势
+        'raw_strength': round(raw_strength, 3),  # ★ 新增: 原始方向(负=空头)
         'grade': grade,
         'atr_pct': round(atr_pct * 100, 2),
         'tp1_candles': round(tp1_candles, 1),
@@ -473,8 +476,8 @@ def plan_entry(base: str, direction: str, market_price: float,
     # ── 7. 综合评级 ──
     rv_score = rv.get('score', 0)
     ts_score = ts.get('strength', 0)
-    # 反转向量 + 趋势强度 + 安全距离 综合
-    composite = rv_score * 0.3 + min(ts_score / 4, 1.0) * 0.4 + (min(safe_dist, 5) / 5) * 0.3
+    # ★ 修复: ts_score 正=顺势, 负=逆势; max(0,...)确保逆势不贡献分
+    composite = rv_score * 0.3 + max(0, ts_score / 4) * 0.4 + (min(safe_dist, 5) / 5) * 0.3
     if composite >= 0.6:
         rating = '推荐入场'
     elif composite >= 0.3:

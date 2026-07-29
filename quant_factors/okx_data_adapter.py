@@ -503,6 +503,50 @@ def build_features_single(df):
 
 
 # ──────────────────────────────────────────────
+# 3b. 统一 OHLC DataFrame 标准化
+# ──────────────────────────────────────────────
+def normalize_ohlc_df(raw_data: list) -> 'pd.DataFrame':
+    """
+    将 OKX API 原始 OHLC 数据标准化为统一 DataFrame
+
+    OKX原始格式有两种:
+      dict格式: [{date, open, high, low, close, volume}, ...]
+      数组格式: [[ts, o, h, l, c, vol, ...], ...]
+
+    返回: DataFrame, 列名统一为 ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        按 timestamp 升序排列
+    """
+    import pandas as pd
+    df = pd.DataFrame(raw_data)
+
+    # 处理OKX API原始k线数组格式 [ts,o,h,l,c,vol,volCcy,volCcyQuote,confirm]
+    if len(df.columns) >= 6 and not any(c in df.columns for c in ['open', 'close', 'date', 'Time']):
+        df = df.iloc[:, :6].copy()
+        df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+    else:
+        # dict格式: 统一时间列名
+        col_map = {'date': 'timestamp', 'Date': 'timestamp', 'Time': 'timestamp', 'time_ms': 'timestamp'}
+        df = df.rename(columns=col_map)
+        # 确保必选列存在
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col not in df.columns:
+                df[col] = 0.0
+
+    # 数值化
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # 时间列处理
+    if 'timestamp' in df.columns:
+        if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
+        df = df.sort_values('timestamp').reset_index(drop=True)
+
+    return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+
+
+# ──────────────────────────────────────────────
 # 4. Full pipeline
 # ──────────────────────────────────────────────
 def build_altcoin_panel(top_n=30, lookback_days=365):
