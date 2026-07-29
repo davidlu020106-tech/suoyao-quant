@@ -1,153 +1,273 @@
 """
-8 维位置共识系统 — 多维度判断币种相对位置
+20 维位置共识系统 (百分制) — 多维度判断币种相对位置
 
-每个判断器接受 feats DataFrame + direction('long'/'short')，返回:
-  position_01: [0,1] 归一化位置 (0=极低/支撑, 1=极高/阻力)
-  bias_score:  [-1,1] 方向对齐评分 (正=位置支持当前方向, 负=位置反对)
+5 种参照系 × 多种时间窗口, 裁尾均值 + 偏向计数 + 分级。
+
+每个判断器接受 feats DataFrame, 返回 0-100 百分制位置:
+  0-25: 极低/超卖/深度价值区
+  25-40: 偏低
+  40-60: 中性
+  60-75: 偏高
+  75-100: 极高/超买/泡沫区
 
 参考 FMZ 策略广场对应策略的核心算法。
 
 用法:
-    from position_gauges import evaluate_all_positions, GAUGE_NAMES
-    
+    from position_gauges import evaluate_all_positions
     result = evaluate_all_positions(feats, 'long')
-    # result['consensus'] = 8个维度的中位数位置
-    # result['high_count'] = 偏高(>0.7)的维度数
-    # result['bias_mean'] = 位置是否支持当前方向
+    # result['score'] = 裁尾均值 0-100
+    # result['lean'] = +6 (6个维度偏高) 或 -4 (4个偏低)
+    # result['grade'] = 'A'~'F'
 """
 
 import numpy as np
 
 
-def _pos_to_bias(pos_01, direction):
-    """将归一化位置转为方向对齐评分。
-    long: 低位置(0)→正面(+1), 高位置(1)→负面(-1)
-    short: 高位置(1)→正面(+1), 低位置(0)→负面(-1)
-    """
-    if direction == 'long':
-        return float(1.0 - 2.0 * pos_01)
-    else:
-        return float(2.0 * pos_01 - 1.0)
-
-
-def _safe_pos(close, lower, upper):
-    """安全计算区间位置, 防止除零"""
+def _safe_pct(close, lower, upper):
+    """安全计算区间百分比位置, 输出 0-100"""
     if upper <= lower:
-        return 0.5
-    return float(np.clip((close - lower) / (upper - lower), 0.0, 1.0))
+        return 50.0
+    return float(np.clip((close - lower) / (upper - lower) * 100.0, 0.0, 100.0))
+
+
+def _dev_to_pct(close, base, max_dev):
+    """偏离度转百分制: (close/base - 1) / max_dev → [0,100]"""
+    if base <= 0:
+        return 50.0
+    dev = close / base - 1.0
+    return float(np.clip((dev + max_dev) / (2.0 * max_dev) * 100.0, 0.0, 100.0))
+
+
+def _atr(feats, period):
+    """从原始OHLC计算ATR (okx_data_adapter可能没有ATR7)"""
+    close = feats['close'].values
+    high = feats['high'].values
+    low = feats['low'].values
+    tr = np.maximum(high[1:] - low[1:],
+                    np.abs(high[1:] - close[:-1]),
+                    np.abs(low[1:] - close[:-1]))
+    # EMA-style ATR
+    alpha = 2.0 / (period + 1)
+    atr_vals = np.zeros(len(tr))
+    atr_vals[0] = tr[0]
+    for i in range(1, len(tr)):
+        atr_vals[i] = alpha * tr[i] + (1 - alpha) * atr_vals[i-1]
+    return atr_vals
 
 
 # ═══════════════════════════════════════
-# 8 个位置判断器
+# 20 个位置判断器 (每个返回 0-100)
 # ═══════════════════════════════════════
 
-def gauge_keltner(feats, direction):
-    """Keltner通道位置 (EMA20 ± 2×ATR10)
-    参考: 已有实现, 基准维度
-    """
+# ── 波动率通道 (3个) ──
+
+def gauge_keltner(feats):
+    """Keltner通道 (EMA20 ± 2×ATR10)"""
     c = float(feats['close'].iloc[-1])
     ku = float(feats['kc_upper'].iloc[-1])
     kl = float(feats['kc_lower'].iloc[-1])
-    pos = _safe_pos(c, kl, ku)
-    return pos, _pos_to_bias(pos, direction)
+    return _safe_pct(c, kl, ku)
 
 
-def gauge_bollinger(feats, direction):
+def gauge_bollinger(feats):
     """Bollinger %B (SMA20 ± 2σ)
     参考 FMZ: Bollinger-Bands-Mean-Reversion w/ Dynamic-Support
-    公式: %B = (close - lower) / (upper - lower)
-    对极端波动比 Keltner 更敏感 (标准差 vs ATR)
     """
     c = float(feats['close'].iloc[-1])
     bu = float(feats['bb_upper'].iloc[-1])
     bl = float(feats['bb_lower'].iloc[-1])
-    pos = _safe_pos(c, bl, bu)
-    return pos, _pos_to_bias(pos, direction)
+    return _safe_pct(c, bl, bu)
 
 
-def gauge_ma50(feats, direction):
-    """MA50偏离度
-    参考 FMZ: Dual-MA-Deviation + ATR Trend-Following
-    价格离中期均线多远, 偏离>20%视为极端
+def gauge_atr14_channel(feats):
+    """ATR通道14: (close - SMA20) / (2×ATR14) → [0,100]
+    参考 FMZ: AlphaTrend-Adaptive-ATR-Channel
     """
     c = float(feats['close'].iloc[-1])
-    ma50 = float(feats['ma50'].iloc[-1])
-    if ma50 <= 0:
-        return 0.5, 0.0
-    dev = (c / ma50 - 1.0)
-    # 归一化: ±20% → [0,1], 超出裁切
-    pos = float(np.clip((dev + 0.20) / 0.40, 0.0, 1.0))
-    return pos, _pos_to_bias(pos, direction)
+    sma20 = float(feats['ma20'].iloc[-1])
+    atr14 = float(feats['atr14'].iloc[-1])
+    if atr14 <= 0:
+        return 50.0
+    dev = (c - sma20) / (2.0 * atr14)
+    return float(np.clip((dev + 1.5) / 3.0 * 100.0, 0.0, 100.0))
 
 
-def gauge_ma200(feats, direction):
-    """MA200偏离度
-    参考 FMZ: 200-EMA-VWAP-MFI Trend-Following
-    山寨币专用: 低于MA200=长期价值区, 高于MA200=泡沫区
-    归一化范围扩大到 ±50%
-    """
-    c = float(feats['close'].iloc[-1])
-    ma200 = float(feats.get('ma200', feats['ma100']).iloc[-1])
-    if ma200 <= 0:
-        return 0.5, 0.0
-    dev = (c / ma200 - 1.0)
-    pos = float(np.clip((dev + 0.50) / 1.00, 0.0, 1.0))
-    return pos, _pos_to_bias(pos, direction)
+# ── 极值区间 (5个, 不同时间窗口) ──
 
-
-def gauge_20d_range(feats, direction):
-    """20周期高低区间位置
+def gauge_5d_range(feats):
+    """5周期高低区间
     参考 FMZ: 5-day High-Low Breakout Price Channel
-    公式: (close - low_20d) / (high_20d - low_20d)
-    最直接的价格位置, 无均线平滑
+    """
+    c = float(feats['close'].iloc[-1])
+    h5 = float(feats['high'].iloc[-5:].max())
+    l5 = float(feats['low'].iloc[-5:].min())
+    return _safe_pct(c, l5, h5)
+
+
+def gauge_10d_range(feats):
+    """10周期高低区间"""
+    c = float(feats['close'].iloc[-1])
+    h10 = float(feats['high'].iloc[-10:].max())
+    l10 = float(feats['low'].iloc[-10:].min())
+    return _safe_pct(c, l10, h10)
+
+
+def gauge_20d_range(feats):
+    """20周期高低区间 (Donchian)
+    参考 FMZ: Donchian-Channel-Trend-Following
     """
     c = float(feats['close'].iloc[-1])
     h20 = float(feats['high_20d'].iloc[-1])
     l20 = float(feats['low_20d'].iloc[-1])
-    pos = _safe_pos(c, l20, h20)
-    return pos, _pos_to_bias(pos, direction)
+    return _safe_pct(c, l20, h20)
 
 
-def gauge_pivot(feats, direction):
-    """Pivot支撑阻力区间位置
-    参考 FMZ: Dynamic-Support-and-Resistance-Adaptive-Pivot
-    公式: (close - S1) / (R1 - S1)
-    基于前一日高/低/收的推演支撑阻力
+def gauge_50d_range(feats):
+    """50周期高低区间
+    参考 FMZ: Historical-High-Breakthrough
+    """
+    c = float(feats['close'].iloc[-1])
+    h50 = float(feats['high_50d'].iloc[-1])
+    l50 = float(feats['low_50d'].iloc[-1])
+    return _safe_pct(c, l50, h50)
+
+
+def gauge_15d_donchian(feats):
+    """Donchian15: 15周期布尔突破通道
+    参考 FMZ: Donchian-Breakout-Strategy
+    """
+    c = float(feats['close'].iloc[-1])
+    h15 = float(feats['high'].iloc[-15:].max())
+    l15 = float(feats['low'].iloc[-15:].min())
+    return _safe_pct(c, l15, h15)
+
+
+# ── 均线偏离 (4个, 不同周期) ──
+
+def gauge_sma10(feats):
+    """SMA10偏离度: (close/sma10-1)/15% → [0,100]
+    参考 FMZ: EMA-Percentage-Channel
+    """
+    c = float(feats['close'].iloc[-1])
+    sma10 = float(feats['close'].iloc[-10:].mean())
+    return _dev_to_pct(c, sma10, 0.15)
+
+
+def gauge_ma50(feats):
+    """MA50偏离度 (±20%)"""
+    c = float(feats['close'].iloc[-1])
+    ma50 = float(feats['ma50'].iloc[-1])
+    return _dev_to_pct(c, ma50, 0.20)
+
+
+def gauge_ema20(feats):
+    """EMA20偏离度 (±12%)
+    参考 FMZ: Dynamic-Envelope-Moving-Average
+    """
+    c = float(feats['close'].iloc[-1])
+    ema = float(feats['ema20'].iloc[-1])
+    return _dev_to_pct(c, ema, 0.12)
+
+
+def gauge_ma200(feats):
+    """MA200偏离度 (±50%), 山寨币价值区判断"""
+    c = float(feats['close'].iloc[-1])
+    ma200 = float(feats.get('ma200', feats['ma100']).iloc[-1])
+    return _dev_to_pct(c, ma200, 0.50)
+
+
+# ── 动量/波动率 (3个) ──
+
+def gauge_rsi(feats):
+    """RSI动量位置: RSI本身[0,100]就是天然百分制
+    参考 FMZ: RSI-Overbought-Oversold Crossover
+    """
+    return float(feats['rsi14'].iloc[-1])
+
+
+def gauge_atr7_channel(feats):
+    """ATR通道7: (close-SMA10)/(2×ATR7) → [0,100]
+    短期ATR比14更敏感
+    """
+    c = float(feats['close'].iloc[-1])
+    sma10 = float(feats['close'].iloc[-10:].mean())
+    atr7_arr = _atr(feats, 7)
+    atr7 = float(atr7_arr[-1])
+    if atr7 <= 0:
+        return 50.0
+    dev = (c - sma10) / (2.0 * atr7)
+    return float(np.clip((dev + 1.5) / 3.0 * 100.0, 0.0, 100.0))
+
+
+def gauge_stoch_rsi(feats):
+    """StochRSI: 比RSI更敏感, [0,100]天然百分制
+    参考 FMZ: Momentum-based-ZigZag
+    """
+    s = feats.get('stoch_rsi', feats['rsi14'])
+    val = float(s.iloc[-1])
+    if hasattr(val, '__float__'):
+        return float(np.clip(float(val) * 100.0, 0.0, 100.0))
+    return 50.0
+
+
+# ── 结构/支撑阻力 (5个) ──
+
+def gauge_pivot(feats):
+    """Pivot区间: (close-S1)/(R1-S1) ×100
+    参考 FMZ: Dynamic-Support/Resistance-Adaptive-Pivot
     """
     c = float(feats['close'].iloc[-1])
     r1 = float(feats['r1'].iloc[-1])
     s1 = float(feats['s1'].iloc[-1])
-    pos = _safe_pos(c, s1, r1)
-    return pos, _pos_to_bias(pos, direction)
+    return _safe_pct(c, s1, r1)
 
 
-def gauge_rsi(feats, direction):
-    """RSI动量位置 (非价格位置)
-    参考 FMZ: RSI-Overbought-Oversold-Crossover w/ BB Dynamic-Stop
-    公式: (RSI - 30) / (70 - 30)
-    动量过热/过冷代理, 极端值预示反转
+def gauge_fib(feats):
+    """Fibonacci回撤位置 (50日摆动)
+    参考 FMZ: RSI+Fibonacci-Retracement
     """
-    rsi = float(feats['rsi14'].iloc[-1])
-    pos = float(np.clip((rsi - 30.0) / 40.0, 0.0, 1.0))
-    return pos, _pos_to_bias(pos, direction)
-
-
-def gauge_fib(feats, direction):
-    """Fibonacci回撤位置
-    参考 FMZ: RSI + Fibonacci-Retracement Strategy
-    基于最近摆动高/低点的相对位置
-    对应 0.382/0.5/0.618 关键回撤位
-    """
+    c = float(feats['close'].iloc[-1])
     high = feats['high'].values
     low = feats['low'].values
-    c = float(feats['close'].iloc[-1])
-
-    # 找最近的摆动高低点 (50根K线内)
     n = min(50, len(high))
-    swing_high = float(np.max(high[-n:]))
-    swing_low = float(np.min(low[-n:]))
-    pos = _safe_pos(c, swing_low, swing_high)
-    return pos, _pos_to_bias(pos, direction)
+    sh = float(np.max(high[-n:]))
+    sl = float(np.min(low[-n:]))
+    return _safe_pct(c, sl, sh)
+
+
+def gauge_fib_short(feats):
+    """Fibonacci回撤位置 (20日摆动, 更敏感)"""
+    c = float(feats['close'].iloc[-1])
+    high = feats['high'].values
+    low = feats['low'].values
+    n = min(20, len(high))
+    sh = float(np.max(high[-n:]))
+    sl = float(np.min(low[-n:]))
+    return _safe_pct(c, sl, sh)
+
+
+def gauge_vwap(feats):
+    """VWAP偏离: (close-vwap)/vwap → [0,100]
+    参考 FMZ: VWAP-Deviation-and-OBV-RSI
+    """
+    c = float(feats['close'].iloc[-1])
+    vol = feats['volume'].values
+    close_arr = feats['close'].values
+    n = min(200, len(close_arr))
+    vwap = float(np.sum(close_arr[-n:] * vol[-n:]) / np.sum(vol[-n:]))
+    return _dev_to_pct(c, vwap, 0.08)
+
+
+def gauge_week_range(feats):
+    """周级别区间: 近24×7=168根15mK线 或 近7根日线的高低区间
+    以近48根15mK线作代理 (~1日级别)
+    """
+    c = float(feats['close'].iloc[-1])
+    n = min(len(feats) // 4, 96)
+    n = max(n, 20)
+    h_week = float(feats['high'].iloc[-n:].max())
+    l_week = float(feats['low'].iloc[-n:].min())
+    return _safe_pct(c, l_week, h_week)
 
 
 # ═══════════════════════════════════════
@@ -155,21 +275,38 @@ def gauge_fib(feats, direction):
 # ═══════════════════════════════════════
 
 GAUGES = {
-    'Keltner': gauge_keltner,
-    'Bollinger': gauge_bollinger,
+    # 波动率通道
+    'Keltner通道': gauge_keltner,
+    'Bollinger%B': gauge_bollinger,
+    'ATR通道14': gauge_atr14_channel,
+    'ATR通道7': gauge_atr7_channel,
+    # 极值区间 (5/10/15/20/50日)
+    '5日区间': gauge_5d_range,
+    '10日区间': gauge_10d_range,
+    '15日Donchian': gauge_15d_donchian,
+    '20日区间': gauge_20d_range,
+    '50日区间': gauge_50d_range,
+    # 均线偏离
+    'SMA10偏离': gauge_sma10,
+    'EMA20偏离': gauge_ema20,
     'MA50偏离': gauge_ma50,
     'MA200偏离': gauge_ma200,
-    '20日区间': gauge_20d_range,
+    # 动量/波动率
+    'RSI': gauge_rsi,
+    'StochRSI': gauge_stoch_rsi,
+    # 结构
     'Pivot区间': gauge_pivot,
-    'RSI位置': gauge_rsi,
-    'Fib回撤': gauge_fib,
+    'Fib50日': gauge_fib,
+    'Fib20日': gauge_fib_short,
+    'VWAP偏离': gauge_vwap,
+    '周级别区间': gauge_week_range,
 }
 
 GAUGE_NAMES = list(GAUGES.keys())
 
 
 def evaluate_all_positions(feats, direction):
-    """运行全部 8 个位置判断器, 返回共识结果
+    """运行全部 20 个位置判断器, 返回共识结果
 
     Args:
         feats: build_features_single 输出的 DataFrame
@@ -177,35 +314,81 @@ def evaluate_all_positions(feats, direction):
 
     Returns:
         {
-            'gauges': {name: {'position': float, 'bias': float}},
-            'consensus': float,        # 8维中位数 [0,1]
-            'high_count': int,         # 偏高维度数 (>0.7)
-            'low_count': int,          # 偏低维度数 (<0.3)
-            'bias_mean': float,        # 平均方向对齐评分 [-1,1]
-            'bias_agree': int,         # 支持当前方向的维度数
+            'score': int,           # 裁尾均值 0-100 (去掉最高/最低各3个)
+            'lean': int,            # (>55) - (<45) 偏向计数, +N偏高 -N偏低
+            'grade': str,           # A(极佳)/B(良好)/C(中性)/D(不利)/F(危险)
+            'high_count': int,      # 偏高(>60)的维度数
+            'low_count': int,       # 偏低(<40)的维度数
+            'bias_mean': float,     # 方向对齐评分 [-1,1]
         }
     """
     positions = []
-    biases = []
     details = {}
 
     for name, gauge_fn in GAUGES.items():
         try:
-            pos, bias = gauge_fn(feats, direction)
+            pos = gauge_fn(feats)
         except Exception:
-            pos, bias = 0.5, 0.0
+            pos = 50.0
+        pos = float(np.clip(pos, 0.0, 100.0))
         positions.append(pos)
-        biases.append(bias)
-        details[name] = {'position': round(pos, 4), 'bias': round(bias, 4)}
+        details[name] = round(pos, 1)
 
     pos_arr = np.array(positions)
-    bias_arr = np.array(biases)
+
+    # 裁尾均值: 去掉最高3个和最低3个
+    n = len(pos_arr)
+    if n >= 8:
+        sorted_pos = np.sort(pos_arr)
+        trimmed = sorted_pos[3:n-3]
+        score = float(np.mean(trimmed))
+    else:
+        score = float(np.median(pos_arr))
+
+    # 偏向计数
+    high_count = int(np.sum(pos_arr > 60))
+    low_count = int(np.sum(pos_arr < 40))
+    lean = high_count - low_count
+
+    # 方向对齐评分
+    # long: 低分好 (0→+1, 100→-1)
+    # short: 高分好 (0→-1, 100→+1)
+    if direction == 'long':
+        biases = [(100.0 - p) / 50.0 - 1.0 for p in positions]  # 0→+1, 50→0, 100→-1
+    else:
+        biases = [p / 50.0 - 1.0 for p in positions]             # 0→-1, 50→0, 100→+1
+    bias_mean = float(np.mean(biases))
+
+    # 分级
+    if direction == 'long':
+        if score <= 25 and lean <= -5:
+            grade = 'A'   # 极低 + 多数偏低 → 绝佳做多位
+        elif score <= 35 and lean <= -2:
+            grade = 'B'   # 偏低 → 良好做多位
+        elif score >= 75 and lean >= 5:
+            grade = 'F'   # 极高 + 多数偏高 → 危险做多位
+        elif score >= 65 and lean >= 2:
+            grade = 'D'   # 偏高 → 不建议做多
+        else:
+            grade = 'C'   # 中性
+    else:
+        if score >= 75 and lean >= 5:
+            grade = 'A'   # 极高 + 多数偏高 → 绝佳做空位
+        elif score >= 65 and lean >= 2:
+            grade = 'B'   # 偏高 → 良好做空位
+        elif score <= 25 and lean <= -5:
+            grade = 'F'   # 极低 + 多数偏低 → 危险做空位
+        elif score <= 35 and lean <= -2:
+            grade = 'D'   # 偏低 → 不建议做空
+        else:
+            grade = 'C'   # 中性
 
     return {
         'gauges': details,
-        'consensus': round(float(np.median(pos_arr)), 4),
-        'high_count': int(np.sum(pos_arr > 0.7)),
-        'low_count': int(np.sum(pos_arr < 0.3)),
-        'bias_mean': round(float(np.mean(bias_arr)), 4),
-        'bias_agree': int(np.sum(bias_arr > 0)) if direction == 'long' else int(np.sum(bias_arr < 0)),
+        'score': round(score),
+        'lean': lean,
+        'grade': grade,
+        'high_count': high_count,
+        'low_count': low_count,
+        'bias_mean': round(bias_mean, 4),
     }
