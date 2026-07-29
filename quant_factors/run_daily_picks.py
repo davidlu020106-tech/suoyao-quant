@@ -852,9 +852,9 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                     else:
                         ts_score = max(0, ts_raw / 4)
 
-                if v and abs(v.judge_score) > 0.05:
+                if v and v.judge_direction != 'neutral':
                     j_dir = v.judge_direction
-                    j_score = v.judge_confidence  # 门槛用score, 权重用confidence
+                    j_score = v.judge_confidence
 
                     # pos_score_val 提前计算 (方向一致和分歧分支都要用)
                     pos_score_val = 0.0

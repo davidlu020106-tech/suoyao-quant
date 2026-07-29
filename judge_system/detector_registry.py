@@ -120,9 +120,9 @@ def aggregate_results(results: Dict[str, DetectorResult]) -> DetectorResult:
         agg_score = 0.0
 
     # 判断方向
-    if agg_score > 0.1:
+    if agg_score > 0.06:
         direction = 'long'
-    elif agg_score < -0.1:
+    elif agg_score < -0.06:
         direction = 'short'
     else:
         direction = 'neutral'
