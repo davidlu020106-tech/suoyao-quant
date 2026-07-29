@@ -399,18 +399,19 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     else:
         return None
 
-    # ★ 20维位置共识 (FMZ多策略融合, 百分制)
+    # ★ 12维位置共识 (滚动百分位+速度)
     try:
         from position_gauges import evaluate_all_positions
         pos_result = evaluate_all_positions(feats_15m, direction)
-        pos_score = pos_result['score']       # 裁尾均值 0-100
-        pos_lean = pos_result['lean']         # 偏向计数 (+N偏高/-N偏低)
+        pos_score = pos_result['score']       # 裁尾均值百分位 0-100
+        pos_speed = pos_result['speed']       # 速度 (正=恶化, 负=改善)
+        pos_lean = pos_result['lean']         # 偏向
         pos_grade = pos_result['grade']       # A/B/C/D/F
         pos_high = pos_result['high_count']
         pos_low = pos_result['low_count']
         pos_bias = pos_result['bias_mean']
     except Exception:
-        pos_score = 50; pos_lean = 0; pos_grade = 'C'
+        pos_score = 50; pos_speed = 0; pos_lean = 0; pos_grade = 'C'
         pos_high = 0; pos_low = 0; pos_bias = 0.0
 
     # ★ KOL共识强度 (按持仓4-8h加权: 1H主角/15m确认/日线方向)
@@ -491,8 +492,9 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         'rsi': float(lat_15m.get('rsi14', 50)),
         # ★ 20维位置共识 (百分制, 替代单维度kc_pos)
         'kc_pos': pos_score / 100.0,       # 兼容旧代码: 转为[0,1]
-        'pos_score': pos_score,            # 裁尾均值 0-100
-        'pos_lean': pos_lean,              # 偏向 +N偏高/-N偏低
+        'pos_score': pos_score,
+        'pos_speed': pos_speed,            # 速度 (正=恶化, 负=改善)
+        'pos_lean': pos_lean,
         'pos_grade': pos_grade,            # A/B/C/D/F
         'pos_high_count': pos_high,
         'pos_low_count': pos_low,
@@ -522,28 +524,32 @@ def fmt_price(p):
     else: return f'${p:.8f}'
 
 
-def fmt_pos(kc_pos, pos_high=0, pos_low=0, pos_lean=0):
-    """20维位置共识 → emoji + 百分制 + 偏向"""
+def fmt_pos(kc_pos, pos_high=0, pos_low=0, pos_lean=0, pos_speed=0):
+    """12维滚动百分位 → 得分+速度"""
     score = int(round(kc_pos * 100)) if kc_pos <= 1.0 else int(kc_pos)
     
-    # 偏向字符串
-    if pos_lean > 0:
-        lean_str = f'+{pos_lean}'
-    elif pos_lean < 0:
-        lean_str = f'{pos_lean}'
+    # 速度方向
+    if pos_speed >= 5:
+        spd_str = f'↑{pos_speed}'
+    elif pos_speed <= -5:
+        spd_str = f'↓{abs(pos_speed)}'
     else:
-        lean_str = '±0'
+        spd_str = ''
+    
+    lean_str = f'+{pos_lean}' if pos_lean > 0 else (f'{pos_lean}' if pos_lean < 0 else '±0')
+    
+    pos_text = f'{score}({lean_str})' + (f' {spd_str}' if spd_str else '')
     
     if score >= 75:
-        return f'🔴极高{score}({lean_str})'
+        return f'🔴极高{pos_text}'
     elif score >= 60:
-        return f'🟡偏高{score}({lean_str})'
+        return f'🟡偏高{pos_text}'
     elif score > 40:
-        return f'🟢中位{score}({lean_str})'
+        return f'🟢中位{pos_text}'
     elif score >= 25:
-        return f'🔵偏低{score}({lean_str})'
+        return f'🔵偏低{pos_text}'
     else:
-        return f'🟣极低{score}({lean_str})'
+        return f'🟣极低{pos_text}'
 
 
 def fmt_target(r, is_long):
@@ -636,14 +642,15 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     # ── 综合过滤 ──
     passed = [r for r in results if r['consistent'] and r['adx'] >= 25]
     
-    # ★ 位置与趋势冲突过滤: 做多但极高位, 做空但极低位 → 排除
+    # ★ 位置与趋势冲突过滤: 做多极高且恶化中, 做空极低且恶化中 → 排除
     pos_conflict = 0
     for r in passed[:]:
         pos_s = r.get('pos_score', 50)
-        if r['direction'] == 'long' and pos_s >= 70:
+        pos_spd = r.get('pos_speed', 0)
+        if r['direction'] == 'long' and pos_s >= 75 and pos_spd >= 5:
             pos_conflict += 1
             passed.remove(r)
-        elif r['direction'] == 'short' and pos_s <= 30:
+        elif r['direction'] == 'short' and pos_s <= 25 and pos_spd <= -5:
             pos_conflict += 1
             passed.remove(r)
 
@@ -705,7 +712,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         arrow_m = '✅' if r['consistent'] else '⚠️'
         align_short = r.get('alignment_grade', '')[:6]
         hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-        pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0))
+        pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0), r.get('pos_speed', 0))
         if r['direction'] == 'long':
             target = r['r1']
             d_arrow = '🟢'
@@ -739,7 +746,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             target = fmt_target(r, False)
             profit_str = f'{r["tp1_profit"]:.0f}%'
             hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0))
+            pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0), r.get('pos_speed', 0))
             align_str = r.get('alignment_grade', '')[:4]
             print(f'  {i:>2d} {r["base"]:<6s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
                   f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
@@ -759,7 +766,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             target = fmt_target(r, True)
             profit_str = f'{r["tp1_profit"]:.0f}%'
             hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0))
+            pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0), r.get('pos_speed', 0))
             print(f'  {i:>2d} {r["base"]:<6s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
                   f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
                   f' {r["okx_lev"]:>3d}x {profit_str:>8s}'
@@ -1153,7 +1160,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
             is_long = r.get('direction') == 'long'
             d_arrow = '🟢多' if is_long else '🔴空'
             hrs = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0))
+            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0), r.get('pos_speed', 0))
             target = r['r1'] if is_long else r['s2']
             vals = [i+1, r['base'], d_arrow, f'{r["adx"]:.1f}', r.get('adx_trend',''),
                     hrs, pos, f'{r["rsi"]:.0f}',
@@ -1192,7 +1199,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
         add_heading_row(table, headers)
         for i, r in enumerate(long_ok[:5]):
             hrs = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0))
+            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0), r.get('pos_speed', 0))
             liq = r['entry'] - (r['entry'] / r['okx_lev'])
             stop = liq + r['entry'] * 0.002
             orb_ref = max(r.get('orb_low', r['entry'] * 0.99), stop + r['entry'] * 0.001)
@@ -1213,7 +1220,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
         add_heading_row(table, headers)
         for i, r in enumerate(short_ok[:5]):
             hrs = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0))
+            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0), r.get('pos_speed', 0))
             liq = r['entry'] + (r['entry'] / r['okx_lev'])
             stop = liq - r['entry'] * 0.002
             orb_ref = min(r.get('orb_high', r['entry'] * 1.01), stop - r['entry'] * 0.001)
