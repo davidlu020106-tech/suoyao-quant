@@ -207,10 +207,19 @@ def kol_vote(latest_row, reg, rids, profs, fr, oi, factor_scores=None, kol_weigh
         try:
             if factor_scores is not None and cid in factor_scores:
                 val = factor_scores[cid]
-                if hasattr(val, 'iloc'):
-                    val = val.iloc[-1]
-                v = float(val)
-                if not np.isnan(v):
+                # 兼容 Series(.iloc) 和 numpy array([-1])
+                try:
+                    if hasattr(val, 'iloc'):
+                        v = float(val.iloc[-1])
+                    elif hasattr(val, '__getitem__') and hasattr(val, '__len__'):
+                        v = float(val[-1]) if len(val) > 0 else 0.0
+                    else:
+                        v = float(val)
+                except Exception:
+                    v = 0.0
+                # ★ CAP_REGISTRY是事件型(仅触发日非零), cscore是状态型(始终有方向)
+                # 当CAP_REGISTRY触发(非零)时用它, 否则回退cscore持续方向判断
+                if not np.isnan(v) and v != 0:
                     fs[cid] = v
                     continue
             fs[cid] = cscore(cid, latest_row, fr, oi)
