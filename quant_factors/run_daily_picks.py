@@ -376,24 +376,24 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     if len(biases) >= 2 and all(b == biases[0] for b in biases):
         alignment = 1.0       # 全一致 → 最高分
         alignment_grade = '三重一致'
-    elif mtf_bias == htf_bias != 'neutral':
-        alignment = 0.8       # MTF+HTF一致 → LTF分歧不重要
-        alignment_grade = 'MTF+HTF一致'
+    elif htf_bias == mtf_bias != 'neutral':
+        alignment = 0.8       # HTF+MTF一致 → 日线趋势被1H确认
+        alignment_grade = '日线+1H一致'
+    elif htf_bias == ltf_bias != 'neutral':
+        alignment = 0.6       # HTF+LTF一致 → 日线确认但1H分歧
+        alignment_grade = '日线+15m一致'
     elif ltf_bias == mtf_bias != 'neutral':
-        alignment = 0.6       # LTF+MTF一致 → HTF滞后
-        alignment_grade = 'LTF+MTF一致'
-    elif ltf_bias == htf_bias != 'neutral':
-        alignment = 0.3       # LTF+HTF一致但MTF反 → 信心低
-        alignment_grade = 'LTF+HTF一致(MTF分歧)'
+        alignment = 0.3       # LTF+MTF一致但日线反 → 信心低
+        alignment_grade = '15m+1H(日线分歧)'
     else:
         alignment = 0.0
         alignment_grade = '三向分歧'
 
     # 方向判定: MTF优先, 回退到HTF
     if mtf_bias != 'neutral':
-        direction = mtf_bias
-    elif htf_bias != 'neutral':
         direction = htf_bias
+    elif mtf_bias != 'neutral':
+        direction = mtf_bias
     elif ltf_bias != 'neutral':
         direction = ltf_bias
     else:
@@ -422,12 +422,12 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     mtf_pol = _polarity(mtf_ln, mtf_sn)
     htf_pol = _polarity(htf_ln, htf_sn)
     
-    kol_consensus = mtf_pol * 0.50 + ltf_pol * 0.30 + htf_pol * 0.20
+    kol_consensus = htf_pol * 0.50 + mtf_pol * 0.30 + ltf_pol * 0.20
     
-    # 方向矛盾惩罚: 15m反对1H→×0.7, 日线反对1H→×0.5
-    if ltf_bias != 'neutral' and mtf_bias != 'neutral' and ltf_bias != mtf_bias:
+    # 方向矛盾惩罚 (日线为尊): 15m反对日线→×0.7, 1H反对日线→×0.5
+    if ltf_bias != 'neutral' and htf_bias != 'neutral' and ltf_bias != htf_bias:
         kol_consensus *= 0.7
-    if htf_bias != 'neutral' and mtf_bias != 'neutral' and htf_bias != mtf_bias:
+    if mtf_bias != 'neutral' and htf_bias != 'neutral' and mtf_bias != htf_bias:
         kol_consensus *= 0.5
 
     # TP1利润
@@ -672,7 +672,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     # 排名：按三重对齐度+方向分组
     ranking_groups = []
     # 全一致最优 → MTF+HTF一致次之 → 两两一致 → 三向分歧垫底
-    for grade_order, grade_label in [(1.0, '三重一致'), (0.8, 'MTF+HTF一致'), (0.6, 'LTF+MTF一致'), (0.3, 'LTF+HTF一致'), (0.0, '三向分歧')]:
+    for grade_order, grade_label in [(1.0, '三重一致'), (0.8, '日线+1H一致'), (0.6, '日线+15m一致'), (0.3, '15m+1H(日线分歧)'), (0.0, '三向分歧')]:
         group = [r for r in results if r.get('alignment', 0) == grade_order]
         if group:
             direction_order = {'long': 0, 'short': 1, 'neutral': 2}
