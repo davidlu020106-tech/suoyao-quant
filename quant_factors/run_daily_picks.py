@@ -874,8 +874,12 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                             pos_grade = r.get('pos_grade', 'C')
                             if pos_grade in ('D', 'F'):
                                 tag = f'⚠️一致(位置{pos_grade}级)'
-                            else:
+                                final_score *= 0.3   # ★ 位置严重冲突 → 扣70%
+                            elif pos_grade == 'C':
                                 tag = '✅一致'
+                            else:  # A or B
+                                tag = '✅一致'
+                                final_score *= 1.05  # 位置支持方向 → 小幅奖励
                     else:
                         # 方向相反 → 不推荐
                         final_score = -1.0
