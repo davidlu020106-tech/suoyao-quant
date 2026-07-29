@@ -634,19 +634,29 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         time.sleep(0.1)
 
     # ── 综合过滤 ──
-    passed = [r for r in results if r['consistent'] and r['adx'] >= 25 and r['tp1_profit'] >= 100]
+    passed = [r for r in results if r['consistent'] and r['adx'] >= 25]
+    
+    # ★ 位置与趋势冲突过滤: 做多但极高位, 做空但极低位 → 排除
+    pos_conflict = 0
+    for r in passed[:]:
+        pos_s = r.get('pos_score', 50)
+        if r['direction'] == 'long' and pos_s >= 70:
+            pos_conflict += 1
+            passed.remove(r)
+        elif r['direction'] == 'short' and pos_s <= 30:
+            pos_conflict += 1
+            passed.remove(r)
+
     short_ok = [r for r in passed if r['direction'] == 'short']
     long_ok = [r for r in passed if r['direction'] == 'long']
 
-    # ── 大盘环境过滤 ──
+    # ── 大盘环境统计 (仅供参考, 不再过滤) ──
     consistent_results = [r for r in results if r['consistent']]
     long_count = sum(1 for r in consistent_results if r['direction'] == 'long')
     short_count = sum(1 for r in consistent_results if r['direction'] == 'short')
     if short_count >= long_count * 2 and short_count >= 3:
-        long_ok = []  # 市场偏空，不做多
         market_env = '🔴 市场偏空'
     elif long_count >= short_count * 2 and long_count >= 3:
-        short_ok = []  # 市场偏多，不做空
         market_env = '🟢 市场偏多'
     else:
         market_env = '⚪ 市场均衡'
@@ -785,14 +795,13 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     total = len(results)
     no_consistency = sum(1 for r in results if not r['consistent'])
     no_adx = sum(1 for r in results if r['consistent'] and r['adx'] < 25)
-    no_profit = sum(1 for r in results if r['consistent'] and r['adx'] >= 25 and r['tp1_profit'] < 100)
 
     print(f'  {dash2}')
     print(f'  过滤统计:')
     print(f'    - 基础通过(R1≥{min_r1}%+OI≥{min_oi/1e6:.1f}M): {total}')
     print(f'    - 方向冲突排除: {no_consistency}')
     print(f'    - ADX<25排除: {no_adx}')
-    print(f'    - TP1利润<100%排除: {no_profit}')
+    print(f'    - 位置冲突排除: {pos_conflict}')
     print(f'    - 最终推荐: {len(passed)}')
     print()
 
