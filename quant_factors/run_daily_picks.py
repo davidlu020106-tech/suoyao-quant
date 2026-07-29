@@ -413,6 +413,23 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         pos_score = 50; pos_lean = 0; pos_grade = 'C'
         pos_high = 0; pos_low = 0; pos_bias = 0.0
 
+    # ★ KOL共识强度 (按持仓4-8h加权: 1H主角/15m确认/日线方向)
+    def _polarity(ln, sn):
+        total = ln + sn
+        return abs(ln - sn) / total if total > 0 else 0.0
+    
+    ltf_pol = _polarity(ltf_ln, ltf_sn)
+    mtf_pol = _polarity(mtf_ln, mtf_sn)
+    htf_pol = _polarity(htf_ln, htf_sn)
+    
+    kol_consensus = mtf_pol * 0.50 + ltf_pol * 0.30 + htf_pol * 0.20
+    
+    # 方向矛盾惩罚: 15m反对1H→×0.7, 日线反对1H→×0.5
+    if ltf_bias != 'neutral' and mtf_bias != 'neutral' and ltf_bias != mtf_bias:
+        kol_consensus *= 0.7
+    if htf_bias != 'neutral' and mtf_bias != 'neutral' and htf_bias != mtf_bias:
+        kol_consensus *= 0.5
+
     # TP1利润
     if direction == 'long':
         tp1_pct = r1_up
@@ -480,6 +497,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         'pos_high_count': pos_high,
         'pos_low_count': pos_low,
         'pos_bias': pos_bias,
+        'kol_consensus': round(kol_consensus, 4),   # KOL共识强度(持仓周期加权)
         'funding_rate': fr, 'open_interest': oi,
         'okx_lev': okx_lev,
         'tp1_pct': tp1_pct,
@@ -810,48 +828,49 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 base = r['base']
                 v = verdicts.get(base)
 
-                # 锁妖塔评分（归一化到0~1）
-                p_score = min(r['adx'] / 50, 1.0) * 0.5 + min(r['tp1_profit'] / 500, 1.0) * 0.5
+                # 锁妖塔评分（KOL共识+趋势+对齐+利润）
+                kol_c = r.get('kol_consensus', 0.5)
+                p_score = (min(r['adx'] / 50, 1.0) * 0.25 +    # 趋势强度
+                           r.get('alignment', 0.5) * 0.25 +      # 三重对齐
+                           kol_c * 0.30 +                        # KOL共识(持仓周期加权)
+                           min(r['tp1_profit'] / 500, 1.0) * 0.20)  # 利润空间
                 p_dir = r['direction']
 
                 # 反转向量 + 趋势强度
-                rv_score = 0.0
                 ts_score = 0.0
-                ts = None
+                ts_raw = 0.0
                 df_coin = coins_data.get(base)
                 if df_coin is not None:
-                    from judge_system.entry_planner import check_reversal_vector, check_trend_strength
-                    rv = check_reversal_vector(df_coin, r['entry'], p_dir)
-                    rv_score = rv.get('score', 0)
+                    from judge_system.entry_planner import check_trend_strength
                     ts = check_trend_strength(df_coin, p_dir)
-                    ts_score = max(0, ts.get('strength', 0) / 4)  # ★ 修复: strength已方向对齐, 逆势=0
+                    ts_raw = ts.get('strength', 0)
+                    # 软化: 逆势(<0)淘汰, 弱趋势(0~0.2)打折, 强趋势正常
+                    if ts_raw <= 0:
+                        ts_score = -999  # 标记淘汰
+                    elif ts_raw <= 0.2:
+                        ts_score = ts_raw / 4 * 0.5  # 弱趋势打五折
+                    else:
+                        ts_score = max(0, ts_raw / 4)
 
                 if v and abs(v.judge_score) > 0.1:
                     j_dir = v.judge_direction
-                    j_score = abs(v.judge_score)
-                    # ★ 修复: 审判评分乘以锁妖塔对齐度，统一评分体系
-                    align_mult = r.get('alignment', 0.5)  # 默认0.5中性
-                    j_score = j_score * (0.5 + 0.5 * align_mult)  # 对齐度低→审判分打折
+                    # ★ 审判直接用confidence, 不再打折
+                    j_score = v.judge_confidence
 
                     if p_dir == j_dir:
-                        # 趋势方向检查：趋势强度≤0 → 逆势，不推荐
-                        ts_raw = ts.get('strength', 0) if ts is not None else 0
-                        if ts_raw <= 0.2:
+                        if ts_score < 0:
                             final_score = -1.0
                             tag = '❌逆势'
                         else:
-                            # 方向一致 + 趋势正确 → 五维综合评分 (含位置共识)
-                            pos_score_val = max(0, (r.get('pos_score', 50) - 50) / 25)  # [0,100]→[-2,2]→裁到[0,1]
+                            # 四维综合: 锁妖塔35% + 审判30% + 趋势20% + 位置15%
+                            pos_score_val = 0.0
                             if direction == 'long':
-                                pos_score_val = max(0, (50 - r.get('pos_score', 50)) / 25)  # 低分→高分
+                                pos_score_val = max(0, (50 - r.get('pos_score', 50)) / 25)
                             else:
-                                pos_score_val = max(0, (r.get('pos_score', 50) - 50) / 25)  # 高分→高分
+                                pos_score_val = max(0, (r.get('pos_score', 50) - 50) / 25)
                             pos_score_val = min(1.0, pos_score_val)
-                            final_score = (p_score * 0.15 + j_score * 0.25 +
-                                           rv_score * 0.15 + ts_score * 0.25 +
-                                           pos_score_val * 0.20)
-                            # 位置严重冲突时标记
-                            pos_bias = r.get('pos_bias', 0)
+                            final_score = (p_score * 0.35 + j_score * 0.30 +
+                                           ts_score * 0.20 + pos_score_val * 0.15)
                             pos_grade = r.get('pos_grade', 'C')
                             if pos_grade in ('D', 'F'):
                                 tag = f'⚠️一致(位置{pos_grade}级)'
