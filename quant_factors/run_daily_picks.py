@@ -399,6 +399,18 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     else:
         return None
 
+    # ★ 8维位置共识 (FMZ多策略融合)
+    try:
+        from position_gauges import evaluate_all_positions
+        pos_result = evaluate_all_positions(feats_15m, direction)
+        pos_consensus = pos_result['consensus']
+        pos_high = pos_result['high_count']
+        pos_low = pos_result['low_count']
+        pos_bias = pos_result['bias_mean']
+    except Exception:
+        pos_consensus = (cur - float(lat_15m.get('kc_lower', cur))) / max(float(lat_15m.get('kc_upper', cur)) - float(lat_15m.get('kc_lower', cur)), 0.001)
+        pos_high = 0; pos_low = 0; pos_bias = 0.0
+
     # TP1利润
     if direction == 'long':
         tp1_pct = r1_up
@@ -458,7 +470,12 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         'consistent': consistent,
         'adx': adx, 'adx_trend': adx_trend, 'adx_hours_left': adx_hours_left,
         'rsi': float(lat_15m.get('rsi14', 50)),
-        'kc_pos': float((cur - float(lat_15m.get('kc_lower', cur))) / max(float(lat_15m.get('kc_upper', cur)) - float(lat_15m.get('kc_lower', cur)), 0.001)),
+        # ★ 8维位置共识 (替代单维度kc_pos)
+        'kc_pos': pos_consensus,              # 兼容旧代码: 共识中位数
+        'pos_consensus': pos_consensus,       # 8维中位数位置 [0,1]
+        'pos_high_count': pos_high,           # 偏高维度数
+        'pos_low_count': pos_low,             # 偏低维度数
+        'pos_bias': pos_bias,                 # 方向对齐评分 [-1,1]
         'funding_rate': fr, 'open_interest': oi,
         'okx_lev': okx_lev,
         'tp1_pct': tp1_pct,
@@ -483,13 +500,19 @@ def fmt_price(p):
     else: return f'${p:.8f}'
 
 
-def fmt_pos(kc_pos):
-    """Keltner通道位置 → emoji标识"""
-    if kc_pos > 1.05: return '🔴上轨上'
-    if kc_pos > 0.80: return '🟡偏高'
-    if kc_pos > 0.20: return '🟢中位'
-    if kc_pos > -0.05: return '🔵偏低'
-    return '🟣下轨下'
+def fmt_pos(kc_pos, pos_high=0, pos_low=0):
+    """8维位置共识 → emoji标识 (偏高/偏低维度数)"""
+    if kc_pos > 0.80:
+        tag = f'🟡偏高({pos_high}/8)' if pos_high > 0 else '🟡偏高'
+    elif kc_pos > 0.20:
+        if pos_high >= 5: tag = f'🟢中位⚠️({pos_high}/8偏高)'
+        elif pos_low >= 5: tag = f'🟢中位⚠️({pos_low}/8偏低)'
+        else: tag = '🟢中位'
+    elif kc_pos > -0.05:
+        tag = f'🔵偏低({pos_low}/8)' if pos_low > 0 else '🔵偏低'
+    else:
+        tag = f'🟣下轨下({pos_low}/8)' if pos_low > 0 else '🟣下轨下'
+    return tag
 
 
 def fmt_target(r, is_long):
@@ -641,7 +664,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         arrow_m = '✅' if r['consistent'] else '⚠️'
         align_short = r.get('alignment_grade', '')[:6]
         hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-        pos_str = fmt_pos(r.get('kc_pos', 0.5))
+        pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0))
         if r['direction'] == 'long':
             target = r['r1']
             d_arrow = '🟢'
@@ -675,7 +698,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             target = fmt_target(r, False)
             profit_str = f'{r["tp1_profit"]:.0f}%'
             hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos_str = fmt_pos(r.get('kc_pos', 0.5))
+            pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0))
             align_str = r.get('alignment_grade', '')[:4]
             print(f'  {i:>2d} {r["base"]:<6s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
                   f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
@@ -695,7 +718,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             target = fmt_target(r, True)
             profit_str = f'{r["tp1_profit"]:.0f}%'
             hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos_str = fmt_pos(r.get('kc_pos', 0.5))
+            pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0))
             print(f'  {i:>2d} {r["base"]:<6s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
                   f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
                   f' {r["okx_lev"]:>3d}x {profit_str:>8s}'
@@ -804,10 +827,17 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                             final_score = -1.0
                             tag = '❌逆势'
                         else:
-                            # 方向一致 + 趋势正确 → 四维综合评分
-                            final_score = (p_score * 0.2 + j_score * 0.3 +
-                                           rv_score * 0.25 + ts_score * 0.25)
-                            tag = '✅一致'
+                            # 方向一致 + 趋势正确 → 五维综合评分 (含位置共识)
+                            pos_bias = r.get('pos_bias', 0)
+                            pos_score = max(0, (pos_bias + 1) / 2)  # [-1,1]→[0,1], 负值=位置反对
+                            final_score = (p_score * 0.15 + j_score * 0.25 +
+                                           rv_score * 0.15 + ts_score * 0.25 +
+                                           pos_score * 0.20)
+                            # 位置严重冲突时降低评级
+                            if pos_bias < -0.3:
+                                tag = '⚠️一致(位置冲突)'
+                            else:
+                                tag = '✅一致'
                     else:
                         # 方向相反 → 不推荐
                         final_score = -1.0
@@ -1065,7 +1095,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
             is_long = r.get('direction') == 'long'
             d_arrow = '🟢多' if is_long else '🔴空'
             hrs = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos = fmt_pos(r.get('kc_pos', 0.5))
+            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0))
             target = r['r1'] if is_long else r['s2']
             vals = [i+1, r['base'], d_arrow, f'{r["adx"]:.1f}', r.get('adx_trend',''),
                     hrs, pos, f'{r["rsi"]:.0f}',
@@ -1104,7 +1134,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
         add_heading_row(table, headers)
         for i, r in enumerate(long_ok[:5]):
             hrs = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos = fmt_pos(r.get('kc_pos', 0.5))
+            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0))
             liq = r['entry'] - (r['entry'] / r['okx_lev'])
             stop = liq + r['entry'] * 0.002
             orb_ref = max(r.get('orb_low', r['entry'] * 0.99), stop + r['entry'] * 0.001)
@@ -1125,7 +1155,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
         add_heading_row(table, headers)
         for i, r in enumerate(short_ok[:5]):
             hrs = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
-            pos = fmt_pos(r.get('kc_pos', 0.5))
+            pos = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0))
             liq = r['entry'] + (r['entry'] / r['okx_lev'])
             stop = liq - r['entry'] * 0.002
             orb_ref = min(r.get('orb_high', r['entry'] * 1.01), stop - r['entry'] * 0.001)
