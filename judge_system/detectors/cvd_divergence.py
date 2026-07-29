@@ -84,7 +84,9 @@ class CvdDivergenceDetector(BaseDetector):
             cvd = np.nan_to_num(cvd, 0)
 
         # 2. 找到摆动点
-        pivot_order = 5
+        # ★ 修复: 根据数据周期自动调整pivot窗口
+        bars_per_unit = kwargs.get('bars_per_unit', 24)  # 默认1H=24根/天
+        pivot_order = max(5, int(20 / bars_per_unit * 24))  # 目标=20根1H≈5根4H≈80根15m
         high_idx, high_vals, low_idx, low_vals = self._find_pivots(close, pivot_order)
         cvd_high_vals = cvd[high_idx] if len(high_idx) > 0 else np.array([])
         cvd_low_vals = cvd[low_idx] if len(low_idx) > 0 else np.array([])
@@ -127,7 +129,8 @@ class CvdDivergenceDetector(BaseDetector):
                     detail_parts.append("价跌量缩(健康下跌)")
 
         # 4. 最近CVD趋势
-        recent_cvd = cvd[-min(20, len(cvd)):]
+        recent_len = min(int(96 / bars_per_unit), len(cvd))  # ~24小时窗口
+        recent_cvd = cvd[-recent_len:]
         cvd_trend = (recent_cvd[-1] - recent_cvd[0]) / abs(recent_cvd[0]) * 100 if recent_cvd[0] != 0 else 0
         if cvd_trend > 5:
             detail_parts.append(f"CVD上升{cvd_trend:.1f}%(资金流入)")

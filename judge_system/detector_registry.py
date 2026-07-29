@@ -54,6 +54,8 @@ def run_all(symbol: str, df: pd.DataFrame, **kwargs) -> Dict[str, DetectorResult
         symbol: 币种名称
         df: OHLC DataFrame
         **kwargs: 额外参数
+            data_period: '15m' / '1H' / '4H' / '1D' 自动调整检测器窗口
+            bars_per_unit: 等效日线K线数 (96=15m, 24=1H, 6=4H, 1=日线)
 
     Returns:
         {检测器名称: DetectorResult} 字典
@@ -98,6 +100,7 @@ def aggregate_results(results: Dict[str, DetectorResult]) -> DetectorResult:
     total_weight = 0.0
     weighted_score = 0.0
     triggered_count = 0
+    active_count = 0  # 非中性检测器数量
     details = []
 
     for name, r in results.items():
@@ -106,6 +109,8 @@ def aggregate_results(results: Dict[str, DetectorResult]) -> DetectorResult:
         total_weight += w
         if r.triggered:
             triggered_count += 1
+        if r.direction != 'neutral':
+            active_count += 1  # ★ 修复: 中性检测器不计入分母
         if r.triggered or abs(r.score) > 0.05:
             details.append(f"{name}: {r.direction}({r.score:.3f})")
 
@@ -122,8 +127,8 @@ def aggregate_results(results: Dict[str, DetectorResult]) -> DetectorResult:
     else:
         direction = 'neutral'
 
-    # 置信度：触发比例 + 幅度
-    confidence = min(1.0, (triggered_count / max(1, len(results))) * 0.6 + abs(agg_score) * 0.4)
+    # ★ 修复: 置信度只基于有方向的检测器, 中性不算不同意
+    confidence = min(1.0, (triggered_count / max(1, active_count)) * 0.6 + abs(agg_score) * 0.4)
 
     return DetectorResult(
         detector_name='aggregate',

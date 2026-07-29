@@ -60,8 +60,9 @@ class FvgDetector(BaseDetector):
         last_bullish = bullish_fvg[-1] or bullish_fvg[-2] if len(close) > 1 else False
         last_bearish = bearish_fvg[-1] or bearish_fvg[-2] if len(close) > 1 else False
 
-        # 统计近20根K线的FVG频率
-        recent = 20
+        # 统计近期的FVG频率
+        bars_per_unit = kwargs.get('bars_per_unit', 24)
+        recent = max(20, int(96 / bars_per_unit))  # ~24小时窗口
         recent_bullish = np.sum(bullish_fvg[-recent:]) if len(close) > recent else 0
         recent_bearish = np.sum(bearish_fvg[-recent:]) if len(close) > recent else 0
 

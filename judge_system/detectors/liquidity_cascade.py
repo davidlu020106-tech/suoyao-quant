@@ -78,8 +78,9 @@ class LiquidityCascadeDetector(BaseDetector):
         current_dev = deviation[-1]
         abs_dev = abs(current_dev)
 
-        # 历史偏离统计 (滚动窗口)
-        window = 30
+        # 历史偏离统计
+        bars_per_unit = kwargs.get('bars_per_unit', 24)
+        window = max(30, int(96 / bars_per_unit))  # ~24小时
         hist_dev = deviation[-min(window, len(deviation)):]
         hist_mean = np.mean(hist_dev)
         hist_std = np.std(hist_dev)

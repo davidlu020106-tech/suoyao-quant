@@ -697,7 +697,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 coins_data[r['base']] = df
         coin_symbols = [c['base'] for c in coins_list] if coins_list else None
         verdicts, dis_count = run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True,
-                                        coins_data=coins_data, print_verdict=False)
+                                        coins_data=coins_data, print_verdict=False,
+                                        bars_per_unit=96)  # ★ 15m数据=96根/天
 
         # ── 综合推荐：锁妖塔 + 审判系统 ──
         if verdicts and passed:
@@ -730,6 +731,9 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 if v and abs(v.judge_score) > 0.1:
                     j_dir = v.judge_direction
                     j_score = abs(v.judge_score)
+                    # ★ 修复: 审判评分乘以锁妖塔对齐度，统一评分体系
+                    align_mult = r.get('alignment', 0.5)  # 默认0.5中性
+                    j_score = j_score * (0.5 + 0.5 * align_mult)  # 对齐度低→审判分打折
 
                     if p_dir == j_dir:
                         # 趋势方向检查：趋势强度≤0 → 逆势，不推荐

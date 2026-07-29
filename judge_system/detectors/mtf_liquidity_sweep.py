@@ -65,14 +65,16 @@ class MtfLiquiditySweepDetector(BaseDetector):
             elif ema50[last] < ema200[last] and close[last] < ema50[last]:
                 htf_bearish = True
 
-        # HTF高低点 (近20根K线)
-        lookback = 20
+        # HTF高低点
+        bars_per_unit = kwargs.get('bars_per_unit', 24)
+        lookback = max(20, int(96 / bars_per_unit))  # ~24小时
         htf_high = np.max(high[-lookback:]) if len(high) >= lookback else high[-1]
         htf_low = np.min(low[-lookback:]) if len(low) >= lookback else low[-1]
 
-        # LTF突破检测 (最近几根K线)
-        recent_high = np.max(high[-5:]) if len(high) >= 5 else high[-1]
-        recent_low = np.min(low[-5:]) if len(low) >= 5 else low[-1]
+        # LTF突破检测
+        recent_lookback = max(5, int(24 / bars_per_unit))  # ~6小时
+        recent_high = np.max(high[-recent_lookback:]) if len(high) >= recent_lookback else high[-1]
+        recent_low = np.min(low[-recent_lookback:]) if len(low) >= recent_lookback else low[-1]
 
         # 突破HTF高点 = 看涨信号
         breakout_high = recent_high > htf_high * 1.001  # 0.1% 突破确认
