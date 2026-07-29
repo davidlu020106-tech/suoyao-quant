@@ -35,8 +35,8 @@ def load_history() -> list:
             data = json.load(f)
         if isinstance(data, list):
             return data
-    except:
-        pass
+    except Exception as e:
+        print(f'[backtest] load_history error: {e}')
     return []
 
 
@@ -72,8 +72,8 @@ def save_recommendation(coins_data: list):
     try:
         with open(LOG_PATH, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
-    except:
-        pass
+    except Exception as e:
+        print(f'[backtest] save error: {e}')
 
 
 def get_current_prices(symbols: list) -> dict:
@@ -81,19 +81,20 @@ def get_current_prices(symbols: list) -> dict:
     prices = {}
     try:
         from okx_data_adapter import _api_get as api_get
-        resp = api_get('/api/v5/market/tickers?instType=SWAP')
+        # ★ 修复: 回测使用 SPOT 价格, 与入场品种类型一致
+        resp = api_get('/api/v5/market/tickers?instType=SPOT')
         if resp.get('code') == '0':
             for item in resp.get('data', []):
-                inst = item['instId']  # e.g. BTC-USDT-SWAP
-                base = inst.replace('-USDT-SWAP', '')
+                inst = item['instId']  # e.g. BTC-USDT (SPOT)
+                base = inst.replace('-USDT', '')
                 if base in symbols:
                     prices[base] = {
                         'last': float(item.get('last', 0)),
                         'high24h': float(item.get('high24h', 0)),
                         'low24h': float(item.get('low24h', 0)),
                     }
-    except:
-        pass
+    except Exception as e:
+        print(f'[backtest] get_current_prices error: {e}')
     # 补缺失的
     for sym in symbols:
         if sym not in prices:

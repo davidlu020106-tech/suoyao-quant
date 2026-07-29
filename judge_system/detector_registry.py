@@ -101,7 +101,7 @@ def aggregate_results(results: Dict[str, DetectorResult]) -> DetectorResult:
     details = []
 
     for name, r in results.items():
-        w = abs(r.score) * r.confidence
+        w = r.confidence  # ★ 修复: 只用信心度加权, 不用score²
         weighted_score += r.score * w
         total_weight += w
         if r.triggered:

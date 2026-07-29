@@ -42,13 +42,13 @@ class SentimentOscillatorDetector(BaseDetector):
         return result
 
     def detect(self, symbol: str, df: pd.DataFrame, **kwargs) -> DetectorResult:
-        if df is None or len(df) < 250:
+        if df is None or len(df) < 60:
             return DetectorResult(
                 detector_name=self.name,
                 direction='neutral',
                 score=0.0,
                 confidence=0.0,
-                detail='数据不足(需>=250根K线)'
+                detail='数据不足(需>=60根K线)'
             )
 
         close = df['close'].values
@@ -95,8 +95,10 @@ class SentimentOscillatorDetector(BaseDetector):
 
         # 4. 当前情绪值
         current_sentiment = sentiment_norm[-1]
+        # 只有有足够数据时才使用EMA值, 否则设为None跳过EMA交叉检测
+        slow_ema_valid = not np.isnan(slow_ema[-1]) if len(slow_ema) > 0 else False
         current_fast = fast_ema[-1] if not np.isnan(fast_ema[-1]) else 0
-        current_slow = slow_ema[-1] if not np.isnan(slow_ema[-1]) else 0
+        current_slow = slow_ema[-1] if slow_ema_valid else 0
         current_signal = signal[-1] if not np.isnan(signal[-1]) else 0
 
         detail_parts = []
@@ -118,8 +120,8 @@ class SentimentOscillatorDetector(BaseDetector):
         else:
             detail_parts.append(f"情绪中性({current_sentiment:.2f})")
 
-        # EMA交叉检测
-        if not np.isnan(current_fast) and not np.isnan(current_slow):
+        # EMA交叉检测 (只有慢EMA有足够数据时才有效)
+        if slow_ema_valid and not np.isnan(current_fast):
             if current_fast > current_slow and current_fast > 0:
                 detail_parts.append("快EMA上穿慢EMA(情绪转暖)")
                 score += 0.2

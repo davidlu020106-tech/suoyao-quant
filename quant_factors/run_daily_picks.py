@@ -71,7 +71,8 @@ def fetch_ohlc(symbol, bar='1H', limit=200):
                         'low': float(c[3]), 'close': float(c[4]),
                         'volume': float(c[5])})
         return out
-    except:
+    except Exception as e:
+        print(f'  [OKX] fetch_ohlc error: {e}')
         return []
 
 
@@ -80,8 +81,9 @@ def fetch_funding_rate(base):
         r = api_get(f'/api/v5/public/funding-rate?instId={base}-USDT-SWAP')
         if r.get('code') == '0' and r.get('data'):
             return float(r['data'][0]['fundingRate'])
-    except:
-        pass
+        print(f'  [OKX] funding-rate for {base}: code={r.get("code")}')
+    except Exception as e:
+        print(f'  [OKX] funding-rate error for {base}: {e}')
     return 0.0
 
 
@@ -90,8 +92,9 @@ def fetch_open_interest(base):
         r = api_get(f'/api/v5/public/open-interest?instType=SWAP&instId={base}-USDT-SWAP')
         if r.get('code') == '0' and r.get('data'):
             return float(r['data'][0]['oi'])
-    except:
-        pass
+        print(f'  [OKX] open-interest for {base}: code={r.get("code")}')
+    except Exception as e:
+        print(f'  [OKX] open-interest error for {base}: {e}')
     return 0.0
 
 
@@ -196,7 +199,8 @@ def kol_vote(latest_row, reg, rids, profs, fr, oi):
     for cid in reg:
         try:
             fs[cid] = cscore(cid, latest_row, fr, oi)
-        except:
+        except Exception as e:
+            print(f'  [cscore] {cid} error: {e}')
             fs[cid] = 0.0
 
     tsigs = []
@@ -251,8 +255,26 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     # KOL投票
     ln, sn, nn, m5_avg = kol_vote(lat, reg, rids, profs, fr, oi)
 
-    # Pivot
-    hh = float(feats['high'].max()); ll = float(feats['low'].min())
+    # ── 日线分析（提前获取, 用于 Pivot 计算）──
+    cdl_daily = fetch_ohlc(sym, '1D', 200)
+    daily_avg = 0.0
+    daily_ln = daily_sn = 0
+    if len(cdl_daily) >= 20:
+        df_d = pd.DataFrame(cdl_daily)
+        df_d['date'] = pd.to_datetime(df_d['date'])
+        df_d = df_d.set_index('date').sort_index()
+        feats_d = build_features_single(df_d)
+        lat_d = feats_d.iloc[-1]
+        daily_ln, daily_sn, _, daily_avg = kol_vote(lat_d, reg, rids, profs, fr, oi)
+        time.sleep(0.15)  # 控制API频率
+
+    # Pivot — 优先用日线范围, 回退到15m范围
+    # ★ 修复: R1/S2 基于日线数据, 避免15m全范围带来的窄幅偏差
+    if len(cdl_daily) >= 20:
+        hh = max(c['high'] for c in cdl_daily)
+        ll = min(c['low'] for c in cdl_daily)
+    else:
+        hh = float(feats['high'].max()); ll = float(feats['low'].min())
     pv = (hh + ll + cur) / 3; r1 = 2 * pv - ll; r2 = pv + (hh - ll)
     s1 = 2 * pv - hh; s2 = pv - (hh - ll)
     r1_up = (r1 / cur - 1) * 100
@@ -270,52 +292,35 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         highs = np.array([c['high'] for c in cdl_h1])
         lows = np.array([c['low'] for c in cdl_h1])
         from smc_entry_signal import calc_adx
-        adx, _ = calc_adx(closes, highs, lows, 14)
+        adx, adx_rising = calc_adx(closes, highs, lows, 14)
         
-        # 算ADX序列判断趋势方向
-        n_bar = len(closes)
-        alpha = 1/14
-        up = np.diff(highs); dn = -np.diff(lows)
-        plus_dm = np.where((up > dn) & (up > 0), up, 0)
-        minus_dm = np.where((dn > up) & (dn > 0), dn, 0)
-        tr = np.maximum(np.maximum(highs[1:]-lows[1:], np.abs(highs[1:]-closes[:-1])), np.abs(lows[1:]-closes[:-1]))
-        atr_s = np.zeros(len(tr)); atr_s[0] = np.mean(tr[:14])
-        pdi_s = np.zeros(len(tr)); mdi_s = np.zeros(len(tr))
-        for i in range(1, len(tr)):
-            atr_s[i] = atr_s[i-1] + alpha*(tr[i]-atr_s[i-1])
-            pdi_s[i] = pdi_s[i-1] + alpha*(plus_dm[i]-pdi_s[i-1])
-            mdi_s[i] = mdi_s[i-1] + alpha*(minus_dm[i]-mdi_s[i-1])
-        pdi_v = 100*pdi_s/atr_s; mdi_v = 100*mdi_s/atr_s
-        dx = 100*np.abs(pdi_v-mdi_v)/(pdi_v+mdi_v+1e-10)
-        adx_all = np.zeros(len(dx)); adx_all[13] = np.mean(dx[:14])
-        for i in range(14, len(dx)):
-            adx_all[i] = adx_all[i-1] + alpha*(dx[i]-adx_all[i-1])
-        
-        if len(adx_all) >= 20:
-            recent = np.mean(adx_all[-10:])
-            prior = np.mean(adx_all[-20:-10])
-            adx_trend = '↑' if recent > prior else '↓'
-            # 估算跌破25所需小时数
-            if adx >= 25 and recent < prior:
-                changes = np.diff(adx_all[-20:])
-                avg_chg = np.mean(changes) if len(changes) > 0 else 0
-                if avg_chg < 0:
-                    bars_left = (adx - 25) / abs(avg_chg)
-                    adx_hours_left = bars_left * 0.25  # 15分钟K线
-    except:
-        pass
+        # 趋势方向: 使用EMA7和EMA50的斜率判断
+        # ★ 统一使用 smc_entry_signal 的 calc_adx，不再重复实现ADX序列
+        if adx > 0:
+            # 用ADX趋势 + 价格方向判断
+            ema7 = np.mean(closes[-7:])
+            ema50 = np.mean(closes[-50:]) if len(closes) >= 50 else np.mean(closes)
+            adx_trend = '↑' if (adx_rising and ema7 > ema50) else ('↓' if adx_rising else '→')
+            # 估算跌破25所需小时数 (简化版)
+            if adx >= 25 and not adx_rising:
+                adx_hours_left = max(0, (adx - 25) / adx * 4) if adx > 0 else 0
+    except Exception as e:
+        print(f'  [ADX] error for {base}: {e}')
 
     # 过滤1: R1≥min_r1, OI≥min_oi
     if r1_up < min_r1: return None
     if oi < min_oi: return None
 
     # TP1利润 (做多用R1, 做空用S2)
+    # ★ 修复: 中性(KOL方向不明确)时跳过, 不默认做空
     if m5_avg > 0.01:  # 偏多
         tp1_pct = r1_up
         direction = 'long'
-    else:  # 偏空或中性→默认做空方向
+    elif m5_avg < -0.01:  # 偏空
         tp1_pct = s2_down
         direction = 'short'
+    else:  # 中性 → 不推荐
+        return None
 
     tp1_profit = tp1_pct * okx_lev
 
@@ -444,8 +449,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             try:
                 p = json.load(open(os.path.join(pd_, f), encoding='utf-8'))
                 profs[f.replace('.json', '')] = p
-            except:
-                pass
+            except Exception as e:
+                print(f'  [profiles] load {f} error: {e}')
 
     if coins:
         coins_list = [{'base': c.upper(), 'symbol': c.upper() + '-USDT', 'vol': 0} for c in coins]
@@ -465,8 +470,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 if di.endswith('-USDT-SWAP'):
                     base_n = di.replace('-USDT-SWAP', '')
                     lev_map[base_n] = int(d.get('lever', 20))
-    except:
-        pass
+    except Exception as e:
+        print(f'  [OKX] instrument/leverage error: {e}')
     print(f'  杠杆数据: {len(lev_map)}个币')
 
     results = []
@@ -778,8 +783,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                         'lev': r.get('okx_lev', 20) if r else 20,
                     })
                 save_recommendation(rec_data)
-            except:
-                pass
+            except Exception as e:
+                print(f'  [backtest] save error: {e}')
 
         # ── 回测上次推荐（最近3次）──
         try:
