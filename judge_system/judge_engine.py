@@ -115,8 +115,8 @@ class JudgeEngine:
                 mod = importlib.import_module(module_path)
                 cls = getattr(mod, class_name)
                 reg.register_detector(cls())
-            except (ImportError, AttributeError):
-                pass
+            except (ImportError, AttributeError) as e:
+                print(f'  [Judge] detector {class_name} load error: {e}')
 
     def scan_coin(self, symbol: str, df: pd.DataFrame,
                   pagoda_result: Optional[dict] = None,
@@ -285,7 +285,7 @@ class JudgeEngine:
             for name in detectors:
                 triggered = sum(
                     1 for v in verdicts.values()
-                    if v.detector_results.get(name, DetectorResult).triggered
+                    if v.detector_results.get(name, DetectorResult()).triggered
                 )
                 print(f"  {name}: 触发 {triggered}/{len(verdicts)}")
 

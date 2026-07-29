@@ -44,17 +44,6 @@ class DetectorResult:
     def is_neutral(self) -> bool:
         return self.direction == 'neutral'
 
-    @property
-    def strength(self) -> str:
-        """信号强度文字描述"""
-        if abs(self.score) < 0.1:
-            return 'weak'
-        elif abs(self.score) < 0.3:
-            return 'moderate'
-        elif abs(self.score) < 0.6:
-            return 'strong'
-        return 'very_strong'
-
 
 class BaseDetector(ABC):
     """
@@ -67,6 +56,17 @@ class BaseDetector(ABC):
 
     def __init__(self, name: str = None):
         self.name = name or self.__class__.__name__
+
+    @staticmethod
+    def _ema(values: 'np.ndarray', period: int) -> 'np.ndarray':
+        """共享EMA计算 — 所有检测器统一使用"""
+        import numpy as np
+        alpha = 2.0 / (period + 1)
+        result = np.full_like(values, np.nan)
+        result[0] = values[0]
+        for i in range(1, len(values)):
+            result[i] = alpha * values[i] + (1 - alpha) * result[i-1]
+        return result
 
     @abstractmethod
     def detect(self, symbol: str, df: pd.DataFrame, **kwargs) -> DetectorResult:

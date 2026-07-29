@@ -31,16 +31,6 @@ class SentimentOscillatorDetector(BaseDetector):
         super().__init__(name="sentiment_oscillator")
         self.cfg = JudgeConfig
 
-    def _ema(self, values: np.ndarray, period: int) -> np.ndarray:
-        alpha = 2.0 / (period + 1)
-        result = np.full_like(values, np.nan)
-        for i in range(len(values)):
-            if i == 0:
-                result[i] = values[i]
-            else:
-                result[i] = alpha * values[i] + (1 - alpha) * result[i-1]
-        return result
-
     def detect(self, symbol: str, df: pd.DataFrame, **kwargs) -> DetectorResult:
         if df is None or len(df) < 60:
             return DetectorResult(

@@ -76,59 +76,46 @@ def fetch_coin_data(symbol: str, timeframe: str = '15m', limit: int = 200):
 
 
 def load_pagoda_results() -> dict:
-    """加载锁妖塔的扫描结果"""
-    candidates = [
-        os.path.join(PROJECT_ROOT, 'quant_factors', 'altcoin_5m_kol_ranking.json'),
-        os.path.join(PROJECT_ROOT, 'quant_factors', 'daily_picks.json'),
-    ]
+    """加载锁妖塔的 daily_picks.json 结果
 
-    for path in candidates:
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            if not isinstance(data, list) or len(data) == 0:
+    新格式支持: ltf_bias/mtf_bias/htf_bias (三重时间框架)
+    兼容: m5_bias/daily_bias (旧双周期格式)
+    """
+    path = os.path.join(PROJECT_ROOT, 'quant_factors', 'daily_picks.json')
+    if not os.path.exists(path):
+        return {}
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, list) or len(data) == 0:
+            return {}
+
+        results = {}
+        for item in data:
+            symbol = item.get('base', '')
+            if not symbol:
                 continue
 
-            results = {}
-            for item in data:
-                symbol = item.get('base', '')
-                if not symbol:
-                    continue
+            # 方向: 直接用系统判定的 direction 字段
+            direction = item.get('direction', 'neutral')
+            # 评分: ADX归一化 × 对齐度
+            score = min(item.get('adx', 0) / 50, 1.0) * item.get('alignment', 0.5)
+            # 细节: 三层KOL简写
+            m5_l = item.get('ltf_long', 0)
+            m5_s = item.get('ltf_short', 0)
+            mt_l = item.get('mtf_long', 0)
+            mt_s = item.get('mtf_short', 0)
+            ht_l = item.get('htf_long', 0)
+            ht_s = item.get('htf_short', 0)
+            align = item.get('alignment_grade', '')
+            detail = f"KOL:{m5_l}/{m5_s}|{mt_l}/{mt_s}|{ht_l}/{ht_s} ADX:{item.get('adx','?'):.0f} {align}"
 
-                if 'kol_long' in item and 'kol_short' in item:
-                    kol_long = item.get('kol_long', 0)
-                    kol_short = item.get('kol_short', 0)
-                    total = kol_long + kol_short
-                    if total > 0:
-                        direction = 'long' if kol_long > kol_short else 'short'
-                        score = (kol_long - kol_short) / total * (item.get('score', 5) or 5) / 5
-                    else:
-                        direction = 'neutral'
-                        score = 0
-                    detail = f"KOL:{kol_long}/{kol_short} ADX:{item.get('adx','?')}"
-                elif 'm5_bias' in item and 'daily_bias' in item:
-                    m5_dir = item.get('m5_bias', 'neutral')
-                    daily_dir = item.get('daily_bias', 'neutral')
-                    if m5_dir == daily_dir or item.get('consistent'):
-                        direction = daily_dir
-                    else:
-                        direction = 'neutral'
-                    m5_l = item.get('m5_long', 0)
-                    m5_s = item.get('m5_short', 0)
-                    total = m5_l + m5_s
-                    score = ((m5_l - m5_s) / max(total, 1)) * (item.get('adx', 25) / 50) if total > 0 else 0
-                    detail = f"KOL:{m5_l}/{m5_s} ADX:{item.get('adx','?')}"
-                else:
-                    continue
+            results[symbol] = {'direction': direction, 'score': score, 'detail': detail}
 
-                results[symbol] = {'direction': direction, 'score': score, 'detail': detail}
-
-            if results:
-                return results
-        except Exception:
-            pass
+        return results
+    except Exception as e:
+        print(f'  [Judge] load_pagoda_results error: {e}')
     return {}
 
 

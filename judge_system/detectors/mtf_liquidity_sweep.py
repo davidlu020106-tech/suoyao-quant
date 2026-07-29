@@ -30,14 +30,6 @@ class MtfLiquiditySweepDetector(BaseDetector):
         super().__init__(name="mtf_liquidity_sweep")
         self.cfg = JudgeConfig
 
-    def _ema(self, values: np.ndarray, period: int) -> np.ndarray:
-        alpha = 2.0 / (period + 1)
-        result = np.full_like(values, np.nan)
-        result[0] = values[0]
-        for i in range(1, len(values)):
-            result[i] = alpha * values[i] + (1 - alpha) * result[i-1]
-        return result
-
     def detect(self, symbol: str, df: pd.DataFrame, **kwargs) -> DetectorResult:
         if df is None or len(df) < 100:
             return DetectorResult(

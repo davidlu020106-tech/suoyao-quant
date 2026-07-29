@@ -31,22 +31,22 @@ class JudgeConfig:
 
     # ─── 分歧判定 ───
     DISAGREE_DIRECTION_THRESHOLD = 0.3  # 方向差异超过此值标记为分歧
-    DISAGREE_SCORE_GAP = 2.0            # 评分差异超过此值标记为分歧
+    DISAGREE_SCORE_GAP = 0.5            # ★ 修复: 从2.0改为0.5 (评分范围[-1,1]内有效)
 
     # ─── CVD 背离检测器 ───
     CVD_EMA_LENGTH = 20       # CVD 计算 EMA 周期
-    CVD_DIVERGENCE_LOOKBACK = 30  # 背离回溯周期
-    CVD_MIN_DIVERGENCE_SCORE = 0.05  # 最小背离幅度
+    # CVD_DIVERGENCE_LOOKBACK = 30  # (未启用) 背离回溯周期
+    # CVD_MIN_DIVERGENCE_SCORE = 0.05  # (未启用) 最小背离幅度
 
     # ─── FVG 检测器 ───
-    FVG_LOOKBACK = 5          # FVG 回溯周期数
-    FVG_MIN_GAP_PCT = 0.001   # 最小缺口比例（0.1%）
+    # FVG_LOOKBACK = 5         # (未启用) FVG 回溯周期数
+    # FVG_MIN_GAP_PCT = 0.001  # (未启用) 最小缺口比例
 
     # ─── 多TF流动性扫荡 ───
-    MTF_HIGH_TF = "240"       # 高时间框架（240分钟=4小时）
-    MTF_LOW_TF = "15"         # 低时间框架（15分钟）
-    MTF_SL_FACTOR = 1.5       # 止损乘数
-    MTF_TP_FACTOR = 3.0       # 止盈乘数
+    # MTF_HIGH_TF = "240"      # (未启用) 高时间框架
+    # MTF_LOW_TF = "15"        # (未启用) 低时间框架
+    # MTF_SL_FACTOR = 1.5      # (未启用) 止损乘数
+    # MTF_TP_FACTOR = 3.0      # (未启用) 止盈乘数
 
     # ─── 流动性级联 ───
     CASCADE_MA_PERIOD = 50    # 均线周期
@@ -61,10 +61,10 @@ class JudgeConfig:
     SENTIMENT_OVERBOUGHT = 0.6  # 超买阈值
     SENTIMENT_OVERSOLD = -0.6   # 超卖阈值
 
-    # ─── 宏观压制检测 ───
-    MACRO_DXY_STRENGTH_THRESHOLD = 1.0   # DXY 20日涨幅 > 1% = 美元强势
-    MACRO_SPX_WEAK_THRESHOLD = -2.0      # SPX 20日跌幅 > 2% = 风险偏好下降
-    MACRO_GOLD_SURGE_THRESHOLD = 3.0     # 黄金 20日涨幅 > 3% = 避险情绪
+    # ─── 宏观压制检测 (未启用 - 待接入宏观数据源) ───
+    # MACRO_DXY_STRENGTH_THRESHOLD = 1.0
+    # MACRO_SPX_WEAK_THRESHOLD = -2.0
+    # MACRO_GOLD_SURGE_THRESHOLD = 3.0
 
     @classmethod
     def to_dict(cls):

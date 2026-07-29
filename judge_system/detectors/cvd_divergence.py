@@ -30,15 +30,6 @@ class CvdDivergenceDetector(BaseDetector):
         super().__init__(name="cvd_divergence")
         self.cfg = JudgeConfig
 
-    def _ema(self, values: np.ndarray, period: int) -> np.ndarray:
-        """计算EMA"""
-        alpha = 2.0 / (period + 1)
-        result = np.full_like(values, np.nan)
-        result[0] = values[0]
-        for i in range(1, len(values)):
-            result[i] = alpha * values[i] + (1 - alpha) * result[i-1]
-        return result
-
     def _find_pivots(self, values: np.ndarray, order: int = 5) -> tuple:
         """
         找到摆动高点和低点
