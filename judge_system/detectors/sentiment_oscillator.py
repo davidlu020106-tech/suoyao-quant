@@ -119,6 +119,32 @@ class SentimentOscillatorDetector(BaseDetector):
                 detail_parts.append("快EMA下穿慢EMA(情绪转冷)")
                 score -= 0.2
 
+        # ★ MACD柱 (快-慢) + 信号线交叉 (FMZ原版核心信号)
+        macd_line = fast_ema - slow_ema  # MACD线
+        macd_hist = macd_line - signal   # 柱状图 = MACD - Signal
+        current_macd = macd_line[-1] if not np.isnan(macd_line[-1]) else 0
+        current_hist = macd_hist[-1] if not np.isnan(macd_hist[-1]) else 0
+        prev_hist = macd_hist[-2] if len(macd_hist) >= 2 and not np.isnan(macd_hist[-2]) else 0
+
+        # MACD与信号线交叉
+        if slow_ema_valid:
+            # MACD上穿Signal → 动能转多
+            if current_macd > current_signal and macd_line[-2] <= signal[-2] if len(macd_line) >= 2 else False:
+                detail_parts.append("MACD上穿信号线(动能转多)")
+                score += 0.25
+            # MACD下穿Signal → 动能转空
+            elif current_macd < current_signal and macd_line[-2] >= signal[-2] if len(macd_line) >= 2 else False:
+                detail_parts.append("MACD下穿信号线(动能转空)")
+                score -= 0.25
+
+        # 柱状图转正/转负
+        if current_hist > 0 and prev_hist <= 0:
+            detail_parts.append(f"动量柱转正({current_hist:.3f})")
+            score += 0.15
+        elif current_hist < 0 and prev_hist >= 0:
+            detail_parts.append(f"动量柱转负({current_hist:.3f})")
+            score -= 0.15
+
         # 情绪趋势
         sent_trend = sentiment_norm[-1] - sentiment_norm[-min(20, len(sentiment_norm))]
         if sent_trend > 0.2:

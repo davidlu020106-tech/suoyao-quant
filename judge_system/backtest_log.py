@@ -140,13 +140,57 @@ def check_path(prices: dict, entry: float, tp1: float, liq: float,
     return 'floating'
 
 
-def backtest_records(records: list, label: str = "上次推荐"):
+def check_path_kbar(kline_snapshot: list, entry: float, tp1: float, liq: float,
+                    direction: str, current_price: float = None):
     """
-    回测多条推荐记录
-
+    ★ 逐K线回放 (替代只看24H高低点)
+    
+    从推荐时的K线快照中逐根K线判断先到TP1还是先爆仓。
+    对比 check_path() 的优势:
+      - 不依赖OKX的24H高低点(只能看最近24h)
+      - 能精确判断TP1和爆仓的先后顺序
+      - 推荐3天前做的也能准确判断
+    
+    Args:
+        kline_snapshot: 推荐时的15m OHLC列表 [{open,high,low,close,volume}, ...]
+        entry/tp1/liq: 入场价/止盈价/强平价
+        direction: 'long'/'short'
+        current_price: 当前最新价格 (可选, 用于补齐快照之后的价格变动)
+    
     Returns:
-        (回测结果列表, 汇总字符串, 统计指标)
+        'tp1_hit': 先到TP1
+        'liq_hit': 先到爆仓
+        'floating': 两点都没到(快照内未触发, 用current_price判断最终状态)
+        'no_data': 快照为空
     """
+    if not kline_snapshot or len(kline_snapshot) < 1:
+        return 'no_data'
+
+    for bar in kline_snapshot:
+        h = float(bar.get('high', 0))
+        l = float(bar.get('low', 0))
+        if direction == 'short':
+            if l <= tp1:
+                return 'tp1_hit'
+            if h >= liq:
+                return 'liq_hit'
+        else:
+            if h >= tp1:
+                return 'tp1_hit'
+            if l <= liq:
+                return 'liq_hit'
+
+    # K线快照内未触发 → 用当前价判断
+    if current_price and current_price != entry:
+        if direction == 'short':
+            return 'tp1_hit' if current_price <= tp1 else ('liq_hit' if current_price >= liq else 'floating')
+        else:
+            return 'tp1_hit' if current_price >= tp1 else ('liq_hit' if current_price <= liq else 'floating')
+
+    return 'floating'
+
+
+def backtest_records(records: list, label: str = "上次推荐"):
     all_results = []
     total_recs = 0
     total_ok = 0
@@ -195,8 +239,12 @@ def backtest_records(records: list, label: str = "上次推荐"):
                 pnl_pct = (current - entry) / entry * 100
                 pnl_usdt = (current - entry) / entry * pos_size * lev
 
-            # ★ 修复: 用价格路径判断, 不是只看收盘价
-            path = check_path(price_data, entry, tp1, liq, direction, lev)
+            # ★ 逐K线回放优先, 回退到24H高低点
+            kline_snap = r.get('df_15m_snapshot', [])
+            if kline_snap:
+                path = check_path_kbar(kline_snap, entry, tp1, liq, direction, current)
+            else:
+                path = check_path(price_data, entry, tp1, liq, direction, lev)
 
             if path == 'tp1_hit':
                 # 计算TP1的实际利润(用lev×1/lev=100%)

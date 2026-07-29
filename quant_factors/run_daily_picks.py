@@ -25,7 +25,7 @@ sys.path.insert(0, QF)
 sys.path.insert(0, BASE)
 from local_config import OKX_API_KEY
 from okx_data_adapter import build_features_single
-from capabilities import CAP_REGISTRY
+from capabilities import CAP_REGISTRY, evaluate_all
 
 STABLE = {'USDT','USDC','DAI','TUSD','BUSD','FDUSD','USDP',
     'EUR','GBP','AUD','SGD','AED','CNY','JPY','KRW','USDG',
@@ -193,14 +193,28 @@ def match_cap(pid, rids):
 # KOL 投票引擎
 # ═══════════════════════════════════════
 
-def kol_vote(latest_row, reg, rids, profs, fr, oi):
-    """全交易员投票, 返回 (long_n, short_n, neutral_n, avg_bias)"""
+def kol_vote(latest_row, reg, rids, profs, fr, oi, factor_scores=None, kol_weights=None):
+    """全交易员投票, 返回 (long_n, short_n, neutral_n, avg_bias)
+    
+    Args:
+        factor_scores: 可选, {cap_id: Series} 来自 evaluate_all() 的预计算分数。
+                       优先使用, 找不到或 NaN 时回退到 cscore()。
+        kol_weights:   可选, {handle: float} KOL权重, 默认1.0。
+                       来自 kol_tracker.load_weights(), 持续预测错误的KOL自动降权。
+    """
     fs = {}
     for cid in reg:
         try:
+            if factor_scores is not None and cid in factor_scores:
+                val = factor_scores[cid]
+                if hasattr(val, 'iloc'):
+                    val = val.iloc[-1]
+                v = float(val)
+                if not np.isnan(v):
+                    fs[cid] = v
+                    continue
             fs[cid] = cscore(cid, latest_row, fr, oi)
         except Exception as e:
-            print(f'  [cscore] {cid} error: {e}')
             fs[cid] = 0.0
 
     tsigs = []
@@ -221,7 +235,16 @@ def kol_vote(latest_row, reg, rids, profs, fr, oi):
             sig = 0.15 if b == 'long_tilted' else (-0.15 if b == 'short_tilted' else 0.0)
         tsigs.append(sig)
 
-    arr = np.array(tsigs)
+    # ★ 按KOL权重调整信号
+    if kol_weights:
+        w_arr = np.array([kol_weights.get(h, 1.0) for h in profs])
+        tsigs_arr = np.array(tsigs)
+        weighted_sigs = tsigs_arr * w_arr
+        # 重新计算方向计数时使用加权信号
+        arr = weighted_sigs
+    else:
+        arr = np.array(tsigs)
+
     ln = int(np.sum(arr > 0.03))
     sn = int(np.sum(arr < -0.03))
     nn = len(arr) - ln - sn
@@ -233,7 +256,7 @@ def kol_vote(latest_row, reg, rids, profs, fr, oi):
 # 单币分析 (1小时 + 日线)
 # ═══════════════════════════════════════
 
-def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None):
+def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None, kol_weights=None):
     """对一个币做三重时间框架分析(15m+1H+日线), 返回结果dict或None"""
     sym = f'{base}-USDT'
 
@@ -252,8 +275,14 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     fr = fetch_funding_rate(base)
     oi = fetch_open_interest(base)
 
+    # 预计算因子分数 (CAP_REGISTRY 向量化评估)
+    feats_15m = feats_15m.copy()
+    feats_15m['funding_rate'] = fr
+    feats_15m['open_interest'] = oi
+    factor_scores_15m, _ = evaluate_all(feats_15m)
+
     # LTF KOL投票
-    ltf_ln, ltf_sn, ltf_nn, ltf_avg = kol_vote(lat_15m, reg, rids, profs, fr, oi)
+    ltf_ln, ltf_sn, ltf_nn, ltf_avg = kol_vote(lat_15m, reg, rids, profs, fr, oi, factor_scores_15m, kol_weights)
 
     # ── MTF: 1H K线 (中期趋势仲裁, 新增) ──
     cdl_1h = fetch_ohlc(sym, '1H', 168)
@@ -264,7 +293,14 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         df_1h = df_1h.set_index('date').sort_index()
         feats_1h = build_features_single(df_1h)
         lat_1h = feats_1h.iloc[-1]
-        mtf_ln, mtf_sn, _, mtf_avg = kol_vote(lat_1h, reg, rids, profs, fr, oi)
+
+        # 注入衍生品列 + 预计算因子
+        feats_1h = feats_1h.copy()
+        feats_1h['funding_rate'] = fr
+        feats_1h['open_interest'] = oi
+        factor_scores_1h, _ = evaluate_all(feats_1h)
+
+        mtf_ln, mtf_sn, _, mtf_avg = kol_vote(lat_1h, reg, rids, profs, fr, oi, factor_scores_1h, kol_weights)
         time.sleep(0.1)
 
     # ── HTF: 日线 (大趋势方向+Pivot) ──
@@ -276,7 +312,14 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         df_d = df_d.set_index('date').sort_index()
         feats_d = build_features_single(df_d)
         lat_d = feats_d.iloc[-1]
-        htf_ln, htf_sn, _, htf_avg = kol_vote(lat_d, reg, rids, profs, fr, oi)
+
+        # 注入衍生品列 + 预计算因子
+        feats_d = feats_d.copy()
+        feats_d['funding_rate'] = fr
+        feats_d['open_interest'] = oi
+        factor_scores_d, _ = evaluate_all(feats_d)
+
+        htf_ln, htf_sn, _, htf_avg = kol_vote(lat_d, reg, rids, profs, fr, oi, factor_scores_d, kol_weights)
         time.sleep(0.15)
 
     # Pivot — 优先用日线范围, 回退到15m范围
@@ -457,6 +500,16 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print('  ╚══════════════════════════════════════╝')
     print(f'  因子: {len(CAP_REGISTRY)} | 交易员: 99')
 
+    # ★ 加载KOL绩效权重
+    try:
+        from kol_tracker import load_weights, update_after_backtest
+        kol_weights = load_weights(profs)
+        kw_active = sum(1 for w in kol_weights.values() if w != 1.0)
+        if kw_active > 0:
+            print(f'  KOL权重: {kw_active}个已校准')
+    except Exception:
+        kol_weights = None
+
     # 将锁妖塔扫描详情存入缓冲区，等重要的结论先出
     _buf = StringIO()
     _old_stdout = sys.stdout
@@ -503,7 +556,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     results = []
     for i, coin in enumerate(coins_list):
         base = coin['base']
-        r = analyze_coin(base, reg, rids, profs, min_r1, min_oi, lev_map)
+        r = analyze_coin(base, reg, rids, profs, min_r1, min_oi, lev_map, kol_weights)
         if r:
             results.append(r)
             arrow = '✅' if r['consistent'] else '⚠️'
@@ -831,6 +884,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                         'kol_1h': f"{r.get('mtf_long',0)}/{r.get('mtf_short',0)}",
                         'kol_d': f"{r.get('htf_long',0)}/{r.get('htf_short',0)}",
                         'alignment': r.get('alignment_grade', ''),
+                        # ★ 保存15m K线快照供逐K线回放
+                        'df_15m_snapshot': r.get('df_15m', []) if r else [],
                     })
                 save_recommendation(rec_data)
             except Exception as e:
@@ -848,6 +903,12 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             bt_results, bt_summary, bt_metrics = backtest_last()
             if bt_results:
                 print_backtest(bt_results, bt_summary, bt_metrics)
+                # ★ 用回测结果更新KOL绩效
+                if kol_weights and bt_results:
+                    try:
+                        update_after_backtest(bt_results, profs)
+                    except Exception:
+                        pass
         except Exception as e:
             print(f'  [回测] 跳过: {e}')
 

@@ -88,18 +88,41 @@ class LiquidityCascadeDetector(BaseDetector):
         # Z-Score: 当前偏离相对于历史的标准差
         z_score = (current_dev - hist_mean) / hist_std if hist_std > 0 else 0
 
+        # ★ 89周期历史极值 (FMZ原版: 动态阈值替代固定8%/15%)
+        extreme_window = min(89, len(deviation))
+        hist_high = np.max(deviation[-extreme_window:])
+        hist_low = np.min(deviation[-extreme_window:])
+        # 当前偏离是否处于历史极值区间
+        at_extreme_high = current_dev >= hist_high * 0.9  # 接近历史最高
+        at_extreme_low = current_dev <= hist_low * 0.9 if hist_low < 0 else current_dev <= hist_low * 1.1
+
+        # ★ 连续极值确认 (FMZ原版: 连续3次squeeze才入场)
+        consecutive = 0
+        for i in range(1, min(5, len(deviation) - 1)):
+            check_dev = deviation[-(i+1)]
+            if current_dev > 0 and check_dev >= hist_high * 0.85:
+                consecutive += 1
+            elif current_dev < 0 and check_dev <= hist_low * 1.15 if hist_low < 0 else check_dev <= hist_low * 0.85:
+                consecutive += 1
+
         # 5. 级联检测
         detail_parts = []
         score = 0.0
 
-        # 极端偏离检测
-        if abs_dev > self.cfg.CASCADE_EXTREME_THRESHOLD:
-            if current_dev > 0:
-                detail_parts.append(f"极端偏离:价格超均线{abs_dev*100:.1f}%(可能回调)")
-                score -= 0.5  # 过高 → 看空
-            else:
-                detail_parts.append(f"极端偏离:价格低均线{abs_dev*100:.1f}%(可能反弹)")
-                score += 0.5  # 过低 → 看多
+        # 极端偏离检测 (动态阈值 + 连续确认)
+        if at_extreme_high:
+            detail_parts.append(f"极值高位:价格超均线{abs_dev*100:.1f}%(89周期极值)")
+            score -= 0.5
+            if consecutive >= 2:
+                score -= 0.2  # 连续极端 = 级联确认
+                detail_parts.append(f"连续{consecutive+1}次极值(级联)")
+            confidence_base = 0.8
+        elif at_extreme_low:
+            detail_parts.append(f"极值低位:价格低均线{abs_dev*100:.1f}%(89周期极值)")
+            score += 0.5
+            if consecutive >= 2:
+                score += 0.2
+                detail_parts.append(f"连续{consecutive+1}次极值(级联)")
             confidence_base = 0.8
         elif abs_dev > self.cfg.CASCADE_DEVIATION_THRESHOLD:
             if current_dev > 0:

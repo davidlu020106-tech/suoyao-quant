@@ -22,6 +22,15 @@ from judge_system.base_detector import BaseDetector, DetectorResult
 from judge_system.judge_config import JudgeConfig
 
 
+def _calc_fvg_mid(df, last_bullish, last_bearish):
+    """计算FVG缺口的中点价格 (FMZ原版: 在FVG中点入场)"""
+    if last_bullish and len(df) >= 4:
+        return round(float((df['high'].iloc[-4] + df['low'].iloc[-2]) / 2), 8)
+    if last_bearish and len(df) >= 4:
+        return round(float((df['low'].iloc[-4] + df['high'].iloc[-2]) / 2), 8)
+    return None
+
+
 class FvgDetector(BaseDetector):
     """公允价值缺口检测器"""
 
@@ -113,5 +122,11 @@ class FvgDetector(BaseDetector):
             score=score,
             confidence=confidence,
             triggered=triggered,
-            detail=detail
-        )
+            detail=detail,
+            meta={
+                'bullish_fvg_count': int(recent_bullish),
+                'bearish_fvg_count': int(recent_bearish),
+                'last_fvg_gap_pct': round(gap_pct, 3),
+                'fvg_mid': _calc_fvg_mid(df, last_bullish, last_bearish),
+                'fvg_type': 'bullish' if last_bullish else ('bearish' if last_bearish else 'none'),
+            })

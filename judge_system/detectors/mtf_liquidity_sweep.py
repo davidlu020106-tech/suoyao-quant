@@ -65,14 +65,14 @@ class MtfLiquiditySweepDetector(BaseDetector):
             elif ema50[last] < ema200[last] and close[last] < ema50[last]:
                 htf_bearish = True
 
-        # HTF高低点
+        # HTF高低点 (★ 扩大窗口, 用 ~96h 数据模拟4H级别HTF)
         bars_per_unit = kwargs.get('bars_per_unit', 24)
-        lookback = max(20, int(96 / bars_per_unit))  # ~24小时
-        htf_high = np.max(high[-lookback:]) if len(high) >= lookback else high[-1]
-        htf_low = np.min(low[-lookback:]) if len(low) >= lookback else low[-1]
+        htf_lookback = max(80, int(384 / bars_per_unit))  # ~4天 = 96小时
+        htf_high = np.max(high[-htf_lookback:]) if len(high) >= htf_lookback else np.max(high)
+        htf_low = np.min(low[-htf_lookback:]) if len(low) >= htf_lookback else np.min(low)
 
-        # LTF突破检测
-        recent_lookback = max(5, int(24 / bars_per_unit))  # ~6小时
+        # LTF突破检测 (保持 ~6h 窗口)
+        recent_lookback = max(5, int(24 / bars_per_unit))
         recent_high = np.max(high[-recent_lookback:]) if len(high) >= recent_lookback else high[-1]
         recent_low = np.min(low[-recent_lookback:]) if len(low) >= recent_lookback else low[-1]
 

@@ -94,6 +94,8 @@ class CvdDivergenceDetector(BaseDetector):
         # 3. 检测背离
         bearish_divergence = False  # 顶背离: 价格↑但CVD↓
         bullish_divergence = False   # 底背离: 价格↓但CVD↑
+        hidden_bearish = False       # 隐藏看跌: 价格HL但CVD LL
+        hidden_bullish = False       # 隐藏看涨: 价格LH但CVD HH
         div_score = 0.0
         detail_parts = []
 
@@ -127,6 +129,27 @@ class CvdDivergenceDetector(BaseDetector):
                 elif last_two_price[-1] < last_two_price[-2] and last_two_cvd[-1] < last_two_cvd[-2]:
                     div_score -= 0.3
                     detail_parts.append("价跌量缩(健康下跌)")
+
+        # ★ 隐藏背离检测 (FMZ原版: 趋势延续信号)
+        # 隐藏看跌: 价格低点抬高(Higher Low), CVD低点却降低(Lower Low) → 下跌趋势延续
+        if len(low_vals) >= 2 and len(cvd_low_vals) >= 2:
+            # 价格HL: last low > 2nd last low
+            price_hl = low_vals[-1] > low_vals[-2]
+            # CVD LL: cvd at last low < cvd at 2nd last low
+            cvd_ll = cvd_low_vals[-1] < cvd_low_vals[-2]
+            if price_hl and cvd_ll:
+                hidden_bearish = True
+                div_score -= 0.4
+                detail_parts.append("隐藏看跌:价格HL但CVD LL(跌势延续)")
+
+        # 隐藏看涨: 价格高点降低(Lower High), CVD高点却抬高(Higher High) → 上涨趋势延续
+        if len(high_vals) >= 2 and len(cvd_high_vals) >= 2:
+            price_lh = high_vals[-1] < high_vals[-2]
+            cvd_hh = cvd_high_vals[-1] > cvd_high_vals[-2]
+            if price_lh and cvd_hh:
+                hidden_bullish = True
+                div_score += 0.4
+                detail_parts.append("隐藏看涨:价格LH但CVD HH(涨势延续)")
 
         # 4. 最近CVD趋势
         recent_len = min(int(96 / bars_per_unit), len(cvd))  # ~24小时窗口
@@ -162,6 +185,8 @@ class CvdDivergenceDetector(BaseDetector):
             meta={
                 'bearish_divergence': bearish_divergence,
                 'bullish_divergence': bullish_divergence,
+                'hidden_bearish': hidden_bearish,
+                'hidden_bullish': hidden_bullish,
                 'cvd_trend_pct': round(cvd_trend, 2),
             }
         )

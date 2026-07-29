@@ -17,7 +17,8 @@ def calc_ote_levels(df: pd.DataFrame, length: int = 20) -> dict:
     """
     ICT OTE (Optimal Trade Entry) 斐波那契入场位
 
-    找近 length 根K线的摆动高/低点，计算 0.618~0.705 区间
+    找近 length 根K线的摆动高/低点，计算 0.618~0.705 区间。
+    ★ 改用局部极值检测(非全局max/min)，对齐 smc_entry_signal 的 detect_swing_points。
 
     Returns:
         {'swing_high': float, 'swing_low': float,
@@ -25,11 +26,39 @@ def calc_ote_levels(df: pd.DataFrame, length: int = 20) -> dict:
     """
     high = df['high'].values
     low = df['low'].values
-    close = df['close'].values
 
-    n = min(length, len(df) - 1)
-    swing_high = np.max(high[-n:])
-    swing_low = np.min(low[-n:])
+    n = min(length, len(df))
+    
+    # ★ 用局部极值检测找真正的摆动点 (而非全局max/min)
+    lookback = max(3, n // 4)  # 自适应窗口
+    swing_high = None
+    swing_low = None
+
+    for i in range(n - 1, max(0, n - n // 3), -1):  # 从最近1/3往远找
+        idx = len(df) - n + i
+        left = min(lookback, idx)
+        right = min(lookback, len(df) - 1 - idx)
+        if right < 1:
+            continue
+        # 局部高点
+        is_swing_high = all(high[idx] >= high[idx - j] for j in range(1, left + 1)) and \
+                        all(high[idx] >= high[idx + j] for j in range(1, right + 1))
+        # 局部低点
+        is_swing_low = all(low[idx] <= low[idx - j] for j in range(1, left + 1)) and \
+                       all(low[idx] <= low[idx + j] for j in range(1, right + 1))
+        if is_swing_high and swing_high is None:
+            swing_high = high[idx]
+        if is_swing_low and swing_low is None:
+            swing_low = low[idx]
+        if swing_high is not None and swing_low is not None:
+            break
+
+    # 回退: 没找到摆动点就用区间极值
+    if swing_high is None:
+        swing_high = float(np.max(high[-n:]))
+    if swing_low is None:
+        swing_low = float(np.min(low[-n:]))
+
     diff = swing_high - swing_low
 
     fib_618 = swing_high - diff * 0.618
@@ -48,24 +77,26 @@ def calc_ote_levels(df: pd.DataFrame, length: int = 20) -> dict:
 def calc_turtle_pullback(df: pd.DataFrame, direction: str,
                          pullback_pct: float = 1.0) -> float:
     """
-    海龟回撤入场位
+    海龟回撤入场位 (近似版: 用K线极值替代真正的20日突破)
+    
+    注意: 正宗海龟使用 20日 Donchian 通道突破 (日线级别)。
+    当前实现用近 N 根K线的极值做近似，N随K线数量自适应。
+    如需真正的 20 日海龟，调用方应传入日线 OHLC 数据。
 
-    做空: 突破20日高后回撤 pullback_pct%
-    做多: 突破20日低后回撤 pullback_pct%
-
-    Returns: 回撤入场价
+    做空: 突破N日高后回撤 pullback_pct%
+    做多: 突破N日低后回撤 pullback_pct%
     """
     high = df['high'].values
     low = df['low'].values
-    n = min(20, len(df))
+    n = min(len(df) // 4, 100)  # ★ 自适应: 用总K线数的1/4, 最多100根
+    n = max(n, 20)
 
     if direction == 'short':
-        # 做空: 20日高 → 价格反弹回撤到该价下方
-        high_20 = np.max(high[-n:])
-        return round(high_20 * (1 + pullback_pct / 100), 8)
+        high_n = float(np.max(high[-n:]))
+        return round(high_n * (1 + pullback_pct / 100), 8)
     else:
-        low_20 = np.min(low[-n:])
-        return round(low_20 * (1 - pullback_pct / 100), 8)
+        low_n = float(np.min(low[-n:]))
+        return round(low_n * (1 - pullback_pct / 100), 8)
 
 
 def calc_ema_reentry(df: pd.DataFrame, direction: str,
