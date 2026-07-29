@@ -234,74 +234,77 @@ def kol_vote(latest_row, reg, rids, profs, fr, oi):
 # ═══════════════════════════════════════
 
 def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None):
-    """对一个币做1小时和日线双周期分析, 返回结果dict或None"""
+    """对一个币做三重时间框架分析(15m+1H+日线), 返回结果dict或None"""
     sym = f'{base}-USDT'
 
-    # ── 1小时K线 ──
-    cdl_h1 = fetch_ohlc(sym, '15m', 200)
-    if len(cdl_h1) < 20: return None
+    # ── LTF: 15m K线 (入场时机+短期KOL) ──
+    cdl_15m = fetch_ohlc(sym, '15m', 200)
+    if len(cdl_15m) < 20: return None
 
-    df = pd.DataFrame(cdl_h1)
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.set_index('date').sort_index()
-    feats = build_features_single(df)
-    lat = feats.iloc[-1]
-    cur = float(lat['close'])
+    df_15m = pd.DataFrame(cdl_15m)
+    df_15m['date'] = pd.to_datetime(df_15m['date'])
+    df_15m = df_15m.set_index('date').sort_index()
+    feats_15m = build_features_single(df_15m)
+    lat_15m = feats_15m.iloc[-1]
+    cur = float(lat_15m['close'])
 
     # 衍生品
     fr = fetch_funding_rate(base)
     oi = fetch_open_interest(base)
 
-    # KOL投票
-    ln, sn, nn, m5_avg = kol_vote(lat, reg, rids, profs, fr, oi)
+    # LTF KOL投票
+    ltf_ln, ltf_sn, ltf_nn, ltf_avg = kol_vote(lat_15m, reg, rids, profs, fr, oi)
 
-    # ── 日线分析（提前获取, 用于 Pivot 计算）──
+    # ── MTF: 1H K线 (中期趋势仲裁, 新增) ──
+    cdl_1h = fetch_ohlc(sym, '1H', 168)
+    mtf_avg = 0.0; mtf_ln = mtf_sn = 0
+    if len(cdl_1h) >= 20:
+        df_1h = pd.DataFrame(cdl_1h)
+        df_1h['date'] = pd.to_datetime(df_1h['date'])
+        df_1h = df_1h.set_index('date').sort_index()
+        feats_1h = build_features_single(df_1h)
+        lat_1h = feats_1h.iloc[-1]
+        mtf_ln, mtf_sn, _, mtf_avg = kol_vote(lat_1h, reg, rids, profs, fr, oi)
+        time.sleep(0.1)
+
+    # ── HTF: 日线 (大趋势方向+Pivot) ──
     cdl_daily = fetch_ohlc(sym, '1D', 200)
-    daily_avg = 0.0
-    daily_ln = daily_sn = 0
+    htf_avg = 0.0; htf_ln = htf_sn = 0
     if len(cdl_daily) >= 20:
         df_d = pd.DataFrame(cdl_daily)
         df_d['date'] = pd.to_datetime(df_d['date'])
         df_d = df_d.set_index('date').sort_index()
         feats_d = build_features_single(df_d)
         lat_d = feats_d.iloc[-1]
-        daily_ln, daily_sn, _, daily_avg = kol_vote(lat_d, reg, rids, profs, fr, oi)
-        time.sleep(0.15)  # 控制API频率
+        htf_ln, htf_sn, _, htf_avg = kol_vote(lat_d, reg, rids, profs, fr, oi)
+        time.sleep(0.15)
 
     # Pivot — 优先用日线范围, 回退到15m范围
-    # ★ 修复: R1/S2 基于日线数据, 避免15m全范围带来的窄幅偏差
     if len(cdl_daily) >= 20:
         hh = max(c['high'] for c in cdl_daily)
         ll = min(c['low'] for c in cdl_daily)
     else:
-        hh = float(feats['high'].max()); ll = float(feats['low'].min())
+        hh = float(feats_15m['high'].max()); ll = float(feats_15m['low'].min())
     pv = (hh + ll + cur) / 3; r1 = 2 * pv - ll; r2 = pv + (hh - ll)
     s1 = 2 * pv - hh; s2 = pv - (hh - ll)
     r1_up = (r1 / cur - 1) * 100
     s2_down = (1 - s2 / cur) * 100
 
-    # 杠杆 (优先用预取数据)
+    # 杠杆
     okx_lev = lev_map.get(base, 20) if lev_map else 20
 
-    # ADX + 趋势方向
-    adx = 0
-    adx_trend = ''
-    adx_hours_left = 0
+    # ADX + 趋势方向 (基于15m)
+    adx = 0; adx_trend = ''; adx_hours_left = 0
     try:
-        closes = np.array([c['close'] for c in cdl_h1])
-        highs = np.array([c['high'] for c in cdl_h1])
-        lows = np.array([c['low'] for c in cdl_h1])
+        closes = np.array([c['close'] for c in cdl_15m])
+        highs = np.array([c['high'] for c in cdl_15m])
+        lows = np.array([c['low'] for c in cdl_15m])
         from smc_entry_signal import calc_adx
         adx, adx_rising = calc_adx(closes, highs, lows, 14)
-        
-        # 趋势方向: 使用EMA7和EMA50的斜率判断
-        # ★ 统一使用 smc_entry_signal 的 calc_adx，不再重复实现ADX序列
         if adx > 0:
-            # 用ADX趋势 + 价格方向判断
             ema7 = np.mean(closes[-7:])
             ema50 = np.mean(closes[-50:]) if len(closes) >= 50 else np.mean(closes)
             adx_trend = '↑' if (adx_rising and ema7 > ema50) else ('↓' if adx_rising else '→')
-            # 估算跌破25所需小时数 (简化版)
             if adx >= 25 and not adx_rising:
                 adx_hours_left = max(0, (adx - 25) / adx * 4) if adx > 0 else 0
     except Exception as e:
@@ -311,16 +314,44 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     if r1_up < min_r1: return None
     if oi < min_oi: return None
 
-    # TP1利润 (做多用R1, 做空用S2)
-    # ★ 修复: 中性(KOL方向不明确)时跳过, 不默认做空
-    if m5_avg > 0.01:  # 偏多
-        tp1_pct = r1_up
-        direction = 'long'
-    elif m5_avg < -0.01:  # 偏空
-        tp1_pct = s2_down
-        direction = 'short'
-    else:  # 中性 → 不推荐
+    # 三重时间框架方向
+    ltf_bias = 'long' if ltf_avg > 0.01 else ('short' if ltf_avg < -0.01 else 'neutral')
+    mtf_bias = 'long' if mtf_avg > 0.01 else ('short' if mtf_avg < -0.01 else 'neutral')
+    htf_bias = 'long' if htf_avg > 0.01 else ('short' if htf_avg < -0.01 else 'neutral')
+
+    # 三重对齐度评分
+    biases = [b for b in [ltf_bias, mtf_bias, htf_bias] if b != 'neutral']
+    if len(biases) >= 2 and all(b == biases[0] for b in biases):
+        alignment = 1.0       # 全一致 → 最高分
+        alignment_grade = '三重一致'
+    elif mtf_bias == htf_bias != 'neutral':
+        alignment = 0.8       # MTF+HTF一致 → LTF分歧不重要
+        alignment_grade = 'MTF+HTF一致'
+    elif ltf_bias == mtf_bias != 'neutral':
+        alignment = 0.6       # LTF+MTF一致 → HTF滞后
+        alignment_grade = 'LTF+MTF一致'
+    elif ltf_bias == htf_bias != 'neutral':
+        alignment = 0.3       # LTF+HTF一致但MTF反 → 信心低
+        alignment_grade = 'LTF+HTF一致(MTF分歧)'
+    else:
+        alignment = 0.0
+        alignment_grade = '三向分歧'
+
+    # 方向判定: MTF优先, 回退到HTF
+    if mtf_bias != 'neutral':
+        direction = mtf_bias
+    elif htf_bias != 'neutral':
+        direction = htf_bias
+    elif ltf_bias != 'neutral':
+        direction = ltf_bias
+    else:
         return None
+
+    # TP1利润
+    if direction == 'long':
+        tp1_pct = r1_up
+    else:
+        tp1_pct = s2_down
 
     tp1_profit = tp1_pct * okx_lev
 
@@ -328,7 +359,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     tp1_req_pct = 100.0 / okx_lev  # 翻倍所需%
     liq_ratio = cur / abs(cur - s2) if abs(cur - s2) > 0.001 else 1
     safe_lev = (okx_lev <= liq_ratio)
-    atr_val = float(lat.get('atr14', 0))
+    atr_val = float(lat_15m.get('atr14', 0))
     if cur > 0 and atr_val > 0:
         atr_daily_pct = (atr_val / cur * 100) * 96 * 0.7
         days_to_tp1 = tp1_req_pct / atr_daily_pct if atr_daily_pct > 0 else 999
@@ -340,10 +371,8 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     if adx >= 25: tp1_score += 3
     elif adx >= 12: tp1_score += 1
 
-    # 方向一致性
-    m5_bias = 'long' if m5_avg > 0.01 else ('short' if m5_avg < -0.01 else 'neutral')
-    daily_bias = 'long' if daily_avg > 0.01 else ('short' if daily_avg < -0.01 else 'neutral')
-    consistent = (m5_bias == daily_bias) and m5_bias != 'neutral'
+    # 方向一致性 (已由三重框架覆盖)
+    consistent = alignment >= 0.6
 
     # 市场状态
     if adx >= 25: state = '趋势'
@@ -351,8 +380,8 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     else: state = '震荡'
 
     # ORB区间（最近12根15分钟K线）
-    orb_low = min(c['low'] for c in cdl_h1[-13:-1]) if len(cdl_h1) >= 14 else cur * 0.99
-    orb_high = max(c['high'] for c in cdl_h1[-13:-1]) if len(cdl_h1) >= 14 else cur * 1.01
+    orb_low = min(c['low'] for c in cdl_15m[-13:-1]) if len(cdl_15m) >= 14 else cur * 0.99
+    orb_high = max(c['high'] for c in cdl_15m[-13:-1]) if len(cdl_15m) >= 14 else cur * 1.01
 
     return {
         'base': base,
@@ -360,14 +389,24 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         'r1': r1, 'r2': r2, 's1': s1, 's2': s2,
         'r1_up': r1_up, 's2_down': s2_down,
         'orb_low': orb_low, 'orb_high': orb_high,
-        'm5_avg': m5_avg, 'm5_bias': m5_bias,
-        'm5_long': ln, 'm5_short': sn, 'm5_neutral': nn,
-        'daily_avg': daily_avg, 'daily_bias': daily_bias,
-        'daily_long': daily_ln, 'daily_short': daily_sn,
+        # 三重时间框架KOL
+        'ltf_avg': ltf_avg, 'ltf_bias': ltf_bias,
+        'ltf_long': ltf_ln, 'ltf_short': ltf_sn, 'ltf_neutral': ltf_nn,
+        'mtf_avg': mtf_avg, 'mtf_bias': mtf_bias,
+        'mtf_long': mtf_ln, 'mtf_short': mtf_sn,
+        'htf_avg': htf_avg, 'htf_bias': htf_bias,
+        'htf_long': htf_ln, 'htf_short': htf_sn,
+        # 对齐度
+        'alignment': alignment, 'alignment_grade': alignment_grade,
+        # 向后兼容 (旧字段名, 供未更新代码使用)
+        'm5_avg': ltf_avg, 'm5_bias': ltf_bias,
+        'm5_long': ltf_ln, 'm5_short': ltf_sn, 'm5_neutral': ltf_nn,
+        'daily_avg': htf_avg, 'daily_bias': htf_bias,
+        'daily_long': htf_ln, 'daily_short': htf_sn,
         'consistent': consistent,
         'adx': adx, 'adx_trend': adx_trend, 'adx_hours_left': adx_hours_left,
-        'rsi': float(lat.get('rsi14', 50)),
-        'kc_pos': float((cur - float(lat.get('kc_lower', cur))) / max(float(lat.get('kc_upper', cur)) - float(lat.get('kc_lower', cur)), 0.001)),
+        'rsi': float(lat_15m.get('rsi14', 50)),
+        'kc_pos': float((cur - float(lat_15m.get('kc_lower', cur))) / max(float(lat_15m.get('kc_upper', cur)) - float(lat_15m.get('kc_lower', cur)), 0.001)),
         'funding_rate': fr, 'open_interest': oi,
         'okx_lev': okx_lev,
         'tp1_pct': tp1_pct,
@@ -377,7 +416,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         'market_state': state,
         'direction': direction,
         'fr_pct': fr * 100,
-        'df_15m': cdl_h1,  # 原始15m K线数据，供审判系统复用
+        'df_15m': cdl_15m,  # 原始15m K线数据，供审判系统复用
     }
 
 
@@ -468,10 +507,12 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         if r:
             results.append(r)
             arrow = '✅' if r['consistent'] else '⚠️'
+            align_tag = r.get('alignment_grade', '')[:6]
             print(f'  [{i+1}/{len(coins_list)}] {base:<8s} 15m L/S={r["m5_long"]}/{r["m5_short"]:<2d} '
+                  f'1H L/S={r["mtf_long"]}/{r["mtf_short"]:<2d} '
                   f'D L/S={r["daily_long"]}/{r["daily_short"]:<2d} '
                   f'ADX={r["adx"]:.0f} R1={r["r1_up"]:.1f}% Pft={r["tp1_profit"]:.0f}% '
-                  f'{arrow}')
+                  f'{arrow} {align_tag}')
         else:
             print(f'  [{i+1}/{len(coins_list)}] {base:<8s} 跳过')
         time.sleep(0.1)
@@ -502,14 +543,25 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     sep = '=' * 90
     dash2 = '-' * 95
 
-    # 排名：按日线方向分组 + 组内ADX排序
-    long_group = [r for r in results if r['daily_avg'] > 0.01]
-    short_group = [r for r in results if r['daily_avg'] < -0.01]
-    neutral_group = [r for r in results if -0.01 <= r['daily_avg'] <= 0.01]
-    long_group.sort(key=lambda r: -r['adx'])
-    short_group.sort(key=lambda r: -r['adx'])
-    neutral_group.sort(key=lambda r: -r['adx'])
-    ranked = long_group + short_group + neutral_group
+    # 排名：按三重对齐度+方向分组
+    ranking_groups = []
+    # 全一致最优 → MTF+HTF一致次之 → 两两一致 → 三向分歧垫底
+    for grade_order, grade_label in [(1.0, '三重一致'), (0.8, 'MTF+HTF一致'), (0.6, 'LTF+MTF一致'), (0.3, 'LTF+HTF一致'), (0.0, '三向分歧')]:
+        group = [r for r in results if r.get('alignment', 0) == grade_order]
+        if group:
+            direction_order = {'long': 0, 'short': 1, 'neutral': 2}
+            group.sort(key=lambda r: (direction_order.get(r['direction'], 2), -r['adx']))
+            ranking_groups.extend(group)
+    ranked = ranking_groups
+    # 未设置alignment的旧数据回退到日线分组
+    if not ranking_groups:
+        long_group = [r for r in results if r['daily_avg'] > 0.01]
+        short_group = [r for r in results if r['daily_avg'] < -0.01]
+        neutral_group = [r for r in results if -0.01 <= r['daily_avg'] <= 0.01]
+        long_group.sort(key=lambda r: -r['adx'])
+        short_group.sort(key=lambda r: -r['adx'])
+        neutral_group.sort(key=lambda r: -r['adx'])
+        ranked = long_group + short_group + neutral_group
 
     print(f'\n\n  {sep}')
     print(f'  ★ 全量排名 (按信号 空←→多 排列)')
@@ -520,11 +572,12 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print()
     hdr = (f'  {"序":>2s} {"币种":<6s} {"方向":>2s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
            f' {"RSI":>4s} {"入场价":>10s} {"止盈价":>10s} {"杠杆":>4s} {"TP1利润%":>8s}'
-           f' {"15mKOL":>7s} {"日KOL":>6s} {"偏度":>6s}')
+           f' {"15mKOL":>7s} {"1HKOL":>5s} {"日KOL":>6s} {"对齐":>6s}')
     print(hdr)
     print(f'  {dash2}')
     for i, r in enumerate(ranked, 1):
         arrow_m = '✅' if r['consistent'] else '⚠️'
+        align_short = r.get('alignment_grade', '')[:6]
         hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
         pos_str = fmt_pos(r.get('kc_pos', 0.5))
         if r['direction'] == 'long':
@@ -537,8 +590,9 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         print(f'  {i:>2d} {r["base"]:<6s} {d_arrow:>2s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
               f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
               f' {r["okx_lev"]:>3d}x {profit_str:>8s}'
-              f' {r["m5_long"]}/{r["m5_short"]:>3d} {r["daily_long"]}/{r["daily_short"]:>3d}'
-              f' {arrow_m:>4s} {r["m5_avg"]:>+5.2f}')
+              f' {r["m5_long"]}/{r["m5_short"]:>3d} {r["mtf_long"]}/{r["mtf_short"]:>2d}'
+              f' {r["daily_long"]}/{r["daily_short"]:>3d}'
+              f' {arrow_m:>2s}{align_short:>4s}')
     print()
 
     # ── 推荐 (严格过滤 TOP3) ──
@@ -552,7 +606,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         print(f'  ── 做空推荐 ──')
         hdr = (f'  {"序":>2s} {"币种":<6s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
                f' {"RSI":>4s} {"入场价":>10s} {"止盈价":>10s} {"杠杆":>4s} {"TP1利润%":>8s}'
-               f' {"15mKOL":>7s} {"日KOL":>6s}')
+               f' {"15mKOL":>7s} {"1HKOL":>5s} {"日KOL":>6s} {"对齐":>4s}')
         print(hdr)
         print(f'  {dash2}')
         for i, r in enumerate(short_ok[:5], 1):
@@ -560,17 +614,19 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             profit_str = f'{r["tp1_profit"]:.0f}%'
             hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
             pos_str = fmt_pos(r.get('kc_pos', 0.5))
+            align_str = r.get('alignment_grade', '')[:4]
             print(f'  {i:>2d} {r["base"]:<6s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
                   f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
                   f' {r["okx_lev"]:>3d}x {profit_str:>8s}'
-                  f' {r["m5_long"]}/{r["m5_short"]:>3d} {r["daily_long"]}/{r["daily_short"]:>3d}')
+                  f' {r["m5_long"]}/{r["m5_short"]:>3d} {r["mtf_long"]}/{r["mtf_short"]:>2d}'
+                  f' {r["daily_long"]}/{r["daily_short"]:>3d} {align_str:>4s}')
         print()
 
     if long_ok:
         print(f'  ── 做多推荐 ──')
         hdr = (f'  {"序":>2s} {"币种":<6s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
                f' {"RSI":>4s} {"入场价":>10s} {"止盈价":>10s} {"杠杆":>4s} {"TP1利润%":>8s}'
-               f' {"15mKOL":>7s} {"日KOL":>6s}')
+               f' {"15mKOL":>7s} {"1HKOL":>5s} {"日KOL":>6s} {"对齐":>4s}')
         print(hdr)
         print(f'  {dash2}')
         for i, r in enumerate(long_ok[:5], 1):
@@ -581,7 +637,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             print(f'  {i:>2d} {r["base"]:<6s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
                   f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
                   f' {r["okx_lev"]:>3d}x {profit_str:>8s}'
-                  f' {r["m5_long"]}/{r["m5_short"]:>3d} {r["daily_long"]}/{r["daily_short"]:>3d}')
+                  f' {r["m5_long"]}/{r["m5_short"]:>3d} {r["mtf_long"]}/{r["mtf_short"]:>2d}'
+                  f' {r["daily_long"]}/{r["daily_short"]:>3d} {r.get("alignment_grade","")[:4]:>4s}')
         print()
 
     # ── 分批入场参考 ──
@@ -600,8 +657,10 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             tag = 'ORB下沿' if is_long else 'ORB上沿'
             target = r['r1'] if is_long else r['s2']
             hrs = r.get('adx_hours_left', 0)
+            align = r.get('alignment_grade', '')
             hrs_s = f' | 趋势 {hrs:.0f}h' if hrs > 0 else ''
-            print(f'  ▶ {r["base"]} {dir_cn}')
+            align_s = f' | {align}' if align else ''
+            print(f'  ▶ {r["base"]} {dir_cn}{align_s}')
             print(f'    入场1 {fmt_price(r["entry"])}(20U) → 入场2 {fmt_price(orb_ref)}(30U) {tag}{hrs_s}')
             print(f'    止损 {fmt_price(stop)} | TP1 {fmt_price(target)}')
         print()
@@ -701,6 +760,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                     'tp1': r['r1'] if p_dir == 'long' else r['s2'],
                     'adx': r['adx'],
                     'kol': f'{r["m5_long"]}/{r["m5_short"]}',
+                    'kol_1h': f'{r.get("mtf_long",0)}/{r.get("mtf_short",0)}',
+                    'alignment': r.get('alignment_grade', ''),
                 })
 
             # 过滤掉分歧的，按综合评分排序
@@ -709,10 +770,12 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
 
             for i, c in enumerate(valid[:3], 1):
                 dir_arrow = '🟢做多' if c['direction'] == 'long' else '🔴做空'
+                align_str = c.get('alignment', '')
                 print(f'  {i}. {c["base"]:<6} {dir_arrow}  '
                       f'评分={c["score"]:.2f}  ADX={c["adx"]:.0f}  '
                       f'入场={fmt_price(c["entry"])}  TP1={fmt_price(c["tp1"])}  '
-                      f'KOL={c["kol"]}  {c["tag"]}')
+                      f'KOL={c["kol"]} 1HKOL={c["kol_1h"]}  '
+                      f'{align_str}  {c["tag"]}')
 
             disagreements = [c for c in combined if c['score'] < 0]
             if disagreements:
@@ -905,14 +968,14 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
 
     # ── 区块2：全量排名TOP10 ──
     if all_results:
-        ranked = sorted(all_results, key=lambda r: r['m5_avg'])
-        doc.add_heading('全量排名 (空←→多)', level=1)
-        headers = ['序','币种','方向','强度','方向','小时','位置','RSI','入场价','止盈价','杠杆','TP1利润%','15mKOL','日KOL','偏度']
-        n = len(ranked)
+        sorted_results = sorted(all_results, key=lambda r: -r.get('alignment', 0))
+        doc.add_heading('全量排名 (对齐度↓)', level=1)
+        headers = ['序','币种','方向','强度','方向','小时','位置','RSI','入场价','止盈价','杠杆','TP1%','15mKOL','1HKOL','日KOL','对齐']
+        n = len(sorted_results)
         table = doc.add_table(rows=1 + n, cols=len(headers))
         table.style = 'Table Grid'
         add_heading_row(table, headers)
-        for i, r in enumerate(ranked):
+        for i, r in enumerate(sorted_results):
             is_long = r.get('direction') == 'long'
             d_arrow = '🟢多' if is_long else '🔴空'
             hrs = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
@@ -922,8 +985,10 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
                     hrs, pos, f'{r["rsi"]:.0f}',
                     fmt_price(r['entry']), fmt_price(target),
                     f'{r["okx_lev"]}x', f'{r["tp1_profit"]:.0f}%',
-                    f'{r["m5_long"]}/{r["m5_short"]}', f'{r["daily_long"]}/{r["daily_short"]}',
-                    f'{r["m5_avg"]:+.2f}']
+                    f'{r["m5_long"]}/{r["m5_short"]}',
+                    f'{r.get("mtf_long",0)}/{r.get("mtf_short",0)}',
+                    f'{r["daily_long"]}/{r["daily_short"]}',
+                    r.get('alignment_grade', '')[:6]]
             add_data_row(table, i+1, vals)
         doc.add_paragraph()
 
