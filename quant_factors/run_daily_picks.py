@@ -900,6 +900,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                     'kol': f'{r["m5_long"]}/{r["m5_short"]}',
                     'kol_1h': f'{r.get("mtf_long",0)}/{r.get("mtf_short",0)}',
                     'alignment': r.get('alignment_grade', ''),
+                    'pos_score': r.get('pos_score', 50),
+                    'pos_lean': r.get('pos_lean', 0),
                 })
 
             # 过滤掉分歧的，按综合评分排序
@@ -909,11 +911,14 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             for i, c in enumerate(valid[:3], 1):
                 dir_arrow = '🟢做多' if c['direction'] == 'long' else '🔴做空'
                 align_str = c.get('alignment', '')
+                pos_s = c.get('pos_score', 50)
+                pos_l = c.get('pos_lean', 0)
+                pos_str = f'{pos_s}({pos_l:+d})' if pos_l != 0 else f'{pos_s}'
                 print(f'  {i}. {c["base"]:<6} {dir_arrow}  '
                       f'评分={c["score"]:.2f}  ADX={c["adx"]:.0f}  '
-                      f'入场={fmt_price(c["entry"])}  TP1={fmt_price(c["tp1"])}  '
-                      f'KOL={c["kol"]} 1HKOL={c["kol_1h"]}  '
-                      f'{align_str}  {c["tag"]}')
+                      f'价格={fmt_price(c["entry"])}  位置={pos_str}  '
+                      f'TP1={fmt_price(c["tp1"])}  '
+                      f'{c["tag"]}')
 
             disagreements = [c for c in combined if c['score'] < 0]
             if disagreements:
