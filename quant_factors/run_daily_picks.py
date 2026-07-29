@@ -789,10 +789,10 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             print(f'  {"=" * 60}')
             print()
 
-            # ── 精准入场方案 ──
+            # ── 精准入场方案 + 收集回测数据 ──
+            entry_plans = {}  # 用于回测保存
             for c in valid[:3]:
                 base = c['base']
-                # 从 results 里找对应的 OHLC 数据
                 r = next((x for x in results if x['base'] == base), None)
                 if r and 'df_15m' in r:
                     from okx_data_adapter import normalize_ohlc_df
@@ -804,6 +804,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                                       r.get('okx_lev', 20), df)
                     print(f'  --- 精准入场: {base} ---')
                     print_entry_plan(plan)
+                    entry_plans[base] = plan
 
             # ── 保存本次推荐到回测日志 ──
             try:
@@ -811,31 +812,42 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 rec_data = []
                 for c in valid[:3]:
                     r = next((x for x in results if x['base'] == c['base']), None)
+                    plan = entry_plans.get(c['base'])
+                    # ★ 修复: TP1/liq 使用 entry_planner 的精准计算值, 不是 pivot
+                    tp1_val = plan['tp1_price'] if plan else c['tp1']
+                    liq_val = plan['liq_price'] if plan else (c['entry'] + c['entry']/r.get('okx_lev',20)*0.7 if c['direction']=='short'
+                               else c['entry'] - c['entry']/r.get('okx_lev',20)*0.7)
                     rec_data.append({
                         'base': c['base'],
                         'direction': c['direction'],
                         'entry': c['entry'],
-                        'tp1': c['tp1'],
-                        'liq': c['entry'] + c['entry']/r.get('okx_lev',20)*0.7 if c['direction']=='short'
-                               else c['entry'] - c['entry']/r.get('okx_lev',20)*0.7,
+                        'tp1': tp1_val,
+                        'liq': liq_val,
                         'lev': r.get('okx_lev', 20) if r else 20,
+                        # ★ 新增: 记录推荐时的上下文
+                        'adx': r.get('adx', 0) if r else 0,
+                        'rsi': r.get('rsi', 0) if r else 0,
+                        'kol_15m': f"{r.get('ltf_long',0)}/{r.get('ltf_short',0)}",
+                        'kol_1h': f"{r.get('mtf_long',0)}/{r.get('mtf_short',0)}",
+                        'kol_d': f"{r.get('htf_long',0)}/{r.get('htf_short',0)}",
+                        'alignment': r.get('alignment_grade', ''),
                     })
                 save_recommendation(rec_data)
             except Exception as e:
                 print(f'  [backtest] save error: {e}')
 
-        # ── 回测上次推荐（最近3次）──
+        # ── 回测上次推荐（最近5次）──
         try:
             from judge_system.backtest_log import init as bt_init, backtest_last, backtest_today, print_backtest
             bt_init(QF)
             now_hour = datetime.now().hour
             if 11 <= now_hour <= 13:
-                bt_results, bt_summary = backtest_today()
+                bt_results, bt_summary, bt_metrics = backtest_today()
                 if bt_results:
-                    print_backtest(bt_results, bt_summary)
-            bt_results, bt_summary = backtest_last()
+                    print_backtest(bt_results, bt_summary, bt_metrics)
+            bt_results, bt_summary, bt_metrics = backtest_last()
             if bt_results:
-                print_backtest(bt_results, bt_summary)
+                print_backtest(bt_results, bt_summary, bt_metrics)
         except Exception as e:
             print(f'  [回测] 跳过: {e}')
 
