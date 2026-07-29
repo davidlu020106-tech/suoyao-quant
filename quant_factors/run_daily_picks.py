@@ -864,7 +864,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                         else:
                             # 四维综合: 锁妖塔35% + 审判30% + 趋势20% + 位置15%
                             pos_score_val = 0.0
-                            if direction == 'long':
+                            if p_dir == 'long':
                                 pos_score_val = max(0, (50 - r.get('pos_score', 50)) / 25)
                             else:
                                 pos_score_val = max(0, (r.get('pos_score', 50) - 50) / 25)
