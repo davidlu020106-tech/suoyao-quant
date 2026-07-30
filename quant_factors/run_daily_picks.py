@@ -958,6 +958,35 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             print(f'  {"=" * 60}')
             print()
 
+            # ── 逆势机会: 日线趋势与位置相悖的币 (偏高/偏低而非极高极低) ──
+            counter_trend = []
+            top3_bases = {c['base'] for c in valid[:3]}
+            for r in results:
+                if r['base'] in top3_bases: continue  # 跳过已进Top3的
+                if not r.get('consistent'): continue
+                if r.get('adx', 0) < 25: continue
+                pos_s = r.get('pos_score', 50)
+                htf_b = r.get('htf_bias', 'neutral')
+                # 日线看多但位置偏高(60-74) — 逆势做多机会
+                if htf_b == 'long' and 60 <= pos_s <= 74:
+                    counter_trend.append((r, '多', pos_s))
+                # 日线看空但位置偏低(26-40) — 逆势做空机会
+                elif htf_b == 'short' and 26 <= pos_s <= 40:
+                    counter_trend.append((r, '空', pos_s))
+            counter_trend.sort(key=lambda x: -x[0]['adx'])
+
+            if counter_trend:
+                print(f'  {"=" * 60}')
+                print(f'  ★ 逆势机会 — 日线趋势与位置相悖 (偏高位/偏低位)')
+                print(f'  {"=" * 60}')
+                for r, ct_dir, ps in counter_trend[:2]:
+                    dir_icon = '🟢' if r['direction'] == 'long' else '🔴'
+                    htf_tag = f'日线{r["htf_bias"]}'
+                    print(f'    {r["base"]:<6} {dir_icon}  ADX={r["adx"]:.0f}  位置={ps}  '
+                          f'价格={fmt_price(r["entry"])}  {htf_tag}  对齐={r.get("alignment_grade","")}')
+                print(f'  {"=" * 60}')
+                print()
+
             # ── 精准入场方案 + 收集回测数据 ──
             entry_plans = {}  # 用于回测保存
             for c in valid[:3]:
