@@ -967,17 +967,17 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 if r.get('adx', 0) < 25: continue
                 pos_s = r.get('pos_score', 50)
                 htf_b = r.get('htf_bias', 'neutral')
-                # 日线看多但位置偏高(60-74) — 逆势做多机会
-                if htf_b == 'long' and 60 <= pos_s <= 74:
+                # 日线看多但位置偏低(26-40) — 回调做多机会
+                if htf_b == 'long' and 26 <= pos_s <= 40:
                     counter_trend.append((r, '多', pos_s))
-                # 日线看空但位置偏低(26-40) — 逆势做空机会
-                elif htf_b == 'short' and 26 <= pos_s <= 40:
+                # 日线看空但位置偏高(60-74) — 反弹做空机会
+                elif htf_b == 'short' and 60 <= pos_s <= 74:
                     counter_trend.append((r, '空', pos_s))
             counter_trend.sort(key=lambda x: -x[0]['adx'])
 
             if counter_trend:
                 print(f'  {"=" * 60}')
-                print(f'  ★ 逆势机会 — 日线趋势与位置相悖 (偏高位/偏低位)')
+                print(f'  ★ 回调/反弹机会 — 日线趋势中反向位置入场')
                 print(f'  {"=" * 60}')
                 for r, ct_dir, ps in counter_trend[:2]:
                     dir_icon = '🟢' if r['direction'] == 'long' else '🔴'
