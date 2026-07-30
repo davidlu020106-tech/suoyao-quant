@@ -523,6 +523,132 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
 
 
 # ═══════════════════════════════════════
+# ★ 马丁格尔选币+参数 (嵌入锁妖塔)
+# ═══════════════════════════════════════
+
+def score_martingale(r):
+    """70分选币 7维度×10分 来源: 20个FMZ策略"""
+    score = 0; reasons = []
+    adx = r.get('adx', 0)
+    if adx < 20:         score += 10; reasons.append(f'震荡度=10(ADX={adx:.0f}<20)')
+    elif adx < 25:       score += 5;  reasons.append(f'震荡度=5(ADX={adx:.0f}<25)')
+    else:                              reasons.append(f'震荡度=0(ADX={adx:.0f}>=25)')
+    kcp = r.get('kc_pos', 0.5)
+    if 0.3 <= kcp <= 0.7:   score += 10; reasons.append(f'位置=10(kc_pos={kcp:.2f})')
+    elif 0.2 <= kcp <= 0.8: score += 5;  reasons.append(f'位置=5(kc_pos={kcp:.2f})')
+    else:                                reasons.append(f'位置=0(kc_pos={kcp:.2f})')
+    direction = r.get('direction', 'neutral')
+    ltf_b = r.get('ltf_bias', 'neutral'); mtf_b = r.get('mtf_bias', 'neutral')
+    htf_b = r.get('htf_bias', 'neutral')
+    biases = [b for b in [ltf_b, mtf_b, htf_b] if b != 'neutral']
+    if biases and all(b == direction for b in biases): score += 10; reasons.append(f'方向=10(三重一致{direction})')
+    elif direction in biases: score += 5; reasons.append(f'方向=5(部分{direction})')
+    else: reasons.append('方向=0')
+    lt_l = r.get('ltf_long', 0); lt_s = r.get('ltf_short', 0); total = lt_l + lt_s
+    if total > 0:
+        ratio = max(lt_l, lt_s) / total
+        if 0.5 <= ratio <= 0.7:   score += 10; reasons.append(f'KOL=10(均衡{lt_l}/{lt_s})')
+        elif 0.7 < ratio <= 0.85: score += 5;  reasons.append(f'KOL=5({lt_l}/{lt_s})')
+        else:                                   reasons.append(f'KOL=0(一边倒{lt_l}/{lt_s})')
+    entry_v = r.get('entry', 0); s1_v = r.get('s1', entry_v*0.95); r1_v = r.get('r1', entry_v*1.05)
+    if s1_v < entry_v < r1_v:
+        if direction == 'long':
+            d2s = (entry_v-s1_v)/entry_v if entry_v > 0 else 0
+            if d2s < 0.05: score += 10; reasons.append(f'水位=10(近支撑{d2s:.1%})')
+            elif d2s < 0.1: score += 5; reasons.append(f'水位=5(距支撑{d2s:.1%})')
+            else: reasons.append('水位=0')
+        elif direction == 'short':
+            d2r = (r1_v-entry_v)/entry_v if entry_v > 0 else 0
+            if d2r < 0.05: score += 10; reasons.append(f'水位=10(近阻力{d2r:.1%})')
+            elif d2r < 0.1: score += 5; reasons.append(f'水位=5(距阻力{d2r:.1%})')
+            else: reasons.append('水位=0')
+        else: score += 5
+    oi = r.get('open_interest', 0)
+    if oi > 5000000: score += 10; reasons.append(f'流动性=10(OI={oi/1e6:.1f}M)')
+    elif oi > 1000000: score += 5; reasons.append(f'流动性=5(OI={oi/1e6:.1f}M)')
+    elif oi > 500000: score += 3; reasons.append(f'流动性=3(OI={oi/1e6:.1f}M)')
+    else: reasons.append('流动性=0')
+    fr_abs = abs(r.get('funding_rate', 0))
+    if fr_abs < 0.0001: score += 10; reasons.append(f'费率=10({fr_abs:.6f})')
+    elif fr_abs < 0.0005: score += 5; reasons.append(f'费率=5({fr_abs:.6f})')
+    else: reasons.append(f'费率=0({fr_abs:.6f})')
+    return score, reasons
+
+
+def calc_mg_params(r, balance=50):
+    """OKX马丁格尔参数 来源: 20个FMZ策略"""
+    entry = r.get('entry', 0); direction = r.get('direction', 'long')
+    adx = r.get('adx', 15); okx_lev = r.get('okx_lev', 10)
+    r1_val = r.get('r1', entry*1.02); s1_val = r.get('s1', entry*0.98); s2_val = r.get('s2', entry*0.95)
+    cdl = r.get('df_15m', []); atr_pct = 0.01
+    if len(cdl) >= 15:
+        cs = [c['close'] for c in cdl[-15:]]; hs = [c['high'] for c in cdl[-15:]]; ls = [c['low'] for c in cdl[-15:]]
+        trs = [max(hs[i]-ls[i], abs(hs[i]-cs[i-1]), abs(ls[i]-cs[i-1])) for i in range(1, len(cs))]
+        atr = sum(trs)/len(trs) if trs else entry*0.01
+        atr_pct = atr/entry if entry > 0 else 0.01
+    margin_total = balance * 0.50; safe_lev = min(okx_lev, 2)
+    layer_m = [margin_total * p for p in [0.40, 0.25, 0.20, 0.15]]
+    add_dist = max(atr_pct*2, 0.005)
+    if adx > 20: add_dist *= 1.5
+    add_dist = min(add_dist, 0.015 if entry > 10 else 0.05)
+    if direction == 'long':
+        tp_pct = max(min((r1_val/entry-1) if entry > 0 else 0.02, 0.03), 0.008)
+        sl_pct = max(min((entry-s1_val)/entry if entry > 0 else 0.02, 0.05), 0.015)
+    else:
+        tp_pct = max(min((1-s2_val/entry) if entry > 0 else 0.02, 0.03), 0.008)
+        sl_pct = max(min((s2_val-entry)/entry if entry > 0 else 0.02, 0.05), 0.015)
+    init_m = layer_m[0]; add_ms = layer_m[1:]
+    add_m = sum(add_ms)/len(add_ms) if add_ms else 10
+    return {'margin_init': round(init_m,2), 'margin_add': round(add_m,2),
+            'add_pct': round(add_dist*100,1), 'tp_pct': round(tp_pct*100,1),
+            'sl_pct': round(sl_pct*100,1), 'max_add': len(layer_m)-1,
+            'safe_lev': safe_lev, 'direction': direction, 'entry': entry}
+
+
+def _print_martingale(results, balance=50):
+    """在锁妖塔输出末尾打印马丁格尔推荐"""
+    if not results:
+        print('  [马丁格尔] 无数据')
+        return
+    scored = []
+    for r in results:
+        s, reasons = score_martingale(r)
+        if s >= 30:
+            params = calc_mg_params(r, balance)
+            scored.append((s, r, params, reasons))
+    scored.sort(key=lambda x: -x[0])
+
+    print(f'  {"="*80}')
+    print(f'  ★ 马丁格尔夜间推荐 (00:00-08:00)')
+    print(f'  {"="*80}')
+    if not scored:
+        print('  ❌ 今晚没有适合马丁格尔的币')
+        return
+
+    top = scored[:8]
+    hdr = f'  {"排名":>3s} {"币种":<6s} {"评分":>5s} {"方向":>3s} {"ADX":>5s} {"入场价":>10s}'
+    print(hdr)
+    print(f'  {"-"*50}')
+    for i, (sc, r, p, _) in enumerate(top, 1):
+        d = '🟢多' if p['direction'] == 'long' else '🔴空'
+        ep = r['entry']
+        ps = f'${ep:.6f}' if ep < 1 else f'${ep:.4f}' if ep < 100 else f'${ep:.2f}'
+        print(f'  {i:>3d} {r["base"]:<6s} {sc:>3d}/70 {d:>3s} {r["adx"]:>4.1f}  {ps:>10s}')
+
+    print()
+    for rank in range(min(3, len(scored))):
+        sc, r, p, reasons = scored[rank]
+        if sc < 40: continue
+        d = '🟢做多' if p['direction'] == 'long' else '🔴做空'
+        print(f'  ┌── #{rank+1} {r["base"]} ({sc}/70) {d} ──────────────────────┐')
+        print(f'  │ 入场: ${p["entry"]:.4f}  杠杆: {p["safe_lev"]}x  ADX: {r["adx"]:.0f}  RSI: {r["rsi"]:.0f}')
+        print(f'  │ 首仓保证金: ≥{p["margin_init"]}U  加仓保证金: ≥{p["margin_add"]}U')
+        print(f'  │ 跌{p["add_pct"]}%加仓  |  涨{p["tp_pct"]}%止盈  |  止损{p["sl_pct"]}%  |  最多加{p["max_add"]}次')
+        print(f'  └{"─"*50}┘')
+    print()
+
+
+# ═══════════════════════════════════════
 # 格式化
 # ═══════════════════════════════════════
 
@@ -1119,6 +1245,9 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     except Exception as e:
         print(f'  Word生成跳过: {e}')
     print()
+
+    # ★ 马丁格尔夜间推荐（集成输出）
+    _print_martingale(results, 50)
 
     return passed
 
