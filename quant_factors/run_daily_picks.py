@@ -586,17 +586,39 @@ def calc_mg_params(r, balance=50):
         trs = [max(hs[i]-ls[i], abs(hs[i]-cs[i-1]), abs(ls[i]-cs[i-1])) for i in range(1, len(cs))]
         atr = sum(trs)/len(trs) if trs else entry*0.01
         atr_pct = atr/entry if entry > 0 else 0.01
-    margin_total = balance * 0.50; safe_lev = min(okx_lev, 2)
-    layer_m = [margin_total * p for p in [0.40, 0.25, 0.20, 0.15]]
+def calc_mg_params(r, balance=50):
+    """OKX马丁格尔参数 来源: 20个FMZ策略 — 单币全押版"""
+    entry = r.get('entry', 0); direction = r.get('direction', 'long')
+    adx = r.get('adx', 15); okx_lev = r.get('okx_lev', 10)
+    r1_val = r.get('r1', entry*1.02); s1_val = r.get('s1', entry*0.98); s2_val = r.get('s2', entry*0.95)
+    cdl = r.get('df_15m', []); atr_pct = 0.01
+    if len(cdl) >= 15:
+        cs = [c['close'] for c in cdl[-15:]]; hs = [c['high'] for c in cdl[-15:]]; ls = [c['low'] for c in cdl[-15:]]
+        trs = [max(hs[i]-ls[i], abs(hs[i]-cs[i-1]), abs(ls[i]-cs[i-1])) for i in range(1, len(cs))]
+        atr = sum(trs)/len(trs) if trs else entry*0.01
+        atr_pct = atr/entry if entry > 0 else 0.01
+    # 全押: 全部50U做保证金, 不留备用金
+    margin_total = balance
+    safe_lev = min(okx_lev, 5)  # 提高安全杠杆上限到5x
+    # 仓位: 首仓占40%, 递减
+    layer_m = [margin_total * p for p in [0.40, 0.30, 0.20, 0.10]]
+    # 间距: ATR×2, ADX高则放宽
     add_dist = max(atr_pct*2, 0.005)
     if adx > 20: add_dist *= 1.5
-    add_dist = min(add_dist, 0.015 if entry > 10 else 0.05)
+    add_dist = min(add_dist, 0.02 if entry > 10 else 0.06)
+    # 止盈: 更激进, 触发更快
     if direction == 'long':
-        tp_pct = max(min((r1_val/entry-1) if entry > 0 else 0.02, 0.03), 0.008)
-        sl_pct = max(min((entry-s1_val)/entry if entry > 0 else 0.02, 0.05), 0.015)
+        tp_pct = max(min((r1_val/entry-1) if entry>0 else 0.02, 0.02), 0.005)
+        sl_pct = max(min((entry-s1_val)/entry if entry>0 else 0.03, 0.06), 0.02)
     else:
-        tp_pct = max(min((1-s2_val/entry) if entry > 0 else 0.02, 0.03), 0.008)
-        sl_pct = max(min((s2_val-entry)/entry if entry > 0 else 0.02, 0.05), 0.015)
+        tp_pct = max(min((1-s2_val/entry) if entry>0 else 0.02, 0.02), 0.005)
+        sl_pct = max(min((s2_val-entry)/entry if entry>0 else 0.03, 0.06), 0.02)
+    init_m = layer_m[0]; add_ms = layer_m[1:]
+    add_m = sum(add_ms)/len(add_ms) if add_ms else 10
+    return {'margin_init': round(init_m,2), 'margin_add': round(add_m,2),
+            'add_pct': round(add_dist*100,1), 'tp_pct': round(tp_pct*100,1),
+            'sl_pct': round(sl_pct*100,1), 'max_add': len(layer_m)-1,
+            'safe_lev': safe_lev, 'direction': direction, 'entry': entry}
     init_m = layer_m[0]; add_ms = layer_m[1:]
     add_m = sum(add_ms)/len(add_ms) if add_ms else 10
     return {'margin_init': round(init_m,2), 'margin_add': round(add_m,2),
@@ -619,32 +641,43 @@ def _print_martingale(results, balance=50):
     scored.sort(key=lambda x: -x[0])
 
     print(f'  {"="*80}')
-    print(f'  ★ 马丁格尔夜间推荐 (00:00-08:00)')
+    print(f'  ★ 马丁格尔夜间推荐 — 只做最优的1个币 (单币全押)')
     print(f'  {"="*80}')
     if not scored:
         print('  ❌ 今晚没有适合马丁格尔的币')
         return
 
-    top = scored[:8]
-    hdr = f'  {"排名":>3s} {"币种":<6s} {"评分":>5s} {"方向":>3s} {"ADX":>5s} {"入场价":>10s}'
-    print(hdr)
-    print(f'  {"-"*50}')
-    for i, (sc, r, p, _) in enumerate(top, 1):
-        d = '🟢多' if p['direction'] == 'long' else '🔴空'
-        ep = r['entry']
-        ps = f'${ep:.6f}' if ep < 1 else f'${ep:.4f}' if ep < 100 else f'${ep:.2f}'
-        print(f'  {i:>3d} {r["base"]:<6s} {sc:>3d}/70 {d:>3s} {r["adx"]:>4.1f}  {ps:>10s}')
+    # ★ 只取评分最高的1个币
+    sc, r, p, reasons = scored[0]
+    if sc < 40:
+        print(f'  ❌ 最优币({r["base"]})评分{sc}<40，今晚不做')
+        return
 
-    print()
-    for rank in range(min(3, len(scored))):
-        sc, r, p, reasons = scored[rank]
-        if sc < 40: continue
-        d = '🟢做多' if p['direction'] == 'long' else '🔴做空'
-        print(f'  ┌── #{rank+1} {r["base"]} ({sc}/70) {d} ──────────────────────┐')
-        print(f'  │ 入场: ${p["entry"]:.4f}  杠杆: {p["safe_lev"]}x  ADX: {r["adx"]:.0f}  RSI: {r["rsi"]:.0f}')
-        print(f'  │ 首仓保证金: ≥{p["margin_init"]}U  加仓保证金: ≥{p["margin_add"]}U')
-        print(f'  │ 跌{p["add_pct"]}%加仓  |  涨{p["tp_pct"]}%止盈  |  止损{p["sl_pct"]}%  |  最多加{p["max_add"]}次')
-        print(f'  └{"─"*50}┘')
+    d = '🟢做多' if p['direction'] == 'long' else '🔴做空'
+    print(f'')
+    print(f'  ┌──────────────────────────────────────────────┐')
+    print(f'  │  ⭐ {r["base"]} ({sc}/70) {d}                              │')
+    print(f'  │  入场价: ${p["entry"]:.4f}                               │')
+    print(f'  ├──────────────────────────────────────────────┤')
+    print(f'  │  OKX马丁格尔机器人参数:                         │')
+    print(f'  │  方向: {"做多" if p["direction"]=="long" else "做空"}    杠杆: {p["safe_lev"]}x                              │')
+    print(f'  │  首次下单保证金: ≥ {p["margin_init"]} USDT')
+    print(f'  │  加仓单保证金:   ≥ {p["margin_add"]} USDT')
+    print(f'  │  跌多少加仓:     {p["add_pct"]}%')
+    print(f'  │  单周期止盈目标: {p["tp_pct"]}%')
+    print(f'  │  止损目标:       {p["sl_pct"]}%')
+    print(f'  │  最大加仓次数:   {p["max_add"]}')
+    print(f'  ├──────────────────────────────────────────────┤')
+    print(f'  │  评分明细:                                     │')
+    for reason in reasons:
+        print(f'  │  {reason}')
+    print(f'  ├──────────────────────────────────────────────┤')
+    print(f'  │  参考策略 (20个FMZ策略):                       │')
+    print(f'  │  545765数学自适应 540533动态移动 513759专业网格')
+    print(f'  │  532865隔夜区间 347955暗度陈仓 520975步进网格')
+    print(f'  │  538802KOL蒸馏 629超级趋势 520273永续平衡')
+    print(f'  │  521018智能定投 542065飞轮量化 ...')
+    print(f'  └──────────────────────────────────────────────┘')
     print()
 
 
