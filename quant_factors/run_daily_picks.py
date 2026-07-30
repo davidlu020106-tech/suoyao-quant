@@ -962,15 +962,13 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             counter_trend = []
             top3_bases = {c['base'] for c in valid[:3]}
             for r in results:
-                if r['base'] in top3_bases: continue  # 跳过已进Top3的
-                if not r.get('consistent'): continue
-                if r.get('adx', 0) < 25: continue
+                if r['base'] in top3_bases: continue
                 pos_s = r.get('pos_score', 50)
                 htf_b = r.get('htf_bias', 'neutral')
-                # 日线看多但位置偏低(26-40) — 回调做多机会
+                # 日线看多但位置偏低(26-40) — 回调做多 (不经过锁妖塔过滤)
                 if htf_b == 'long' and 26 <= pos_s <= 40:
                     counter_trend.append((r, '多', pos_s))
-                # 日线看空但位置偏高(60-74) — 反弹做空机会
+                # 日线看空但位置偏高(60-74) — 反弹做空 (不经过锁妖塔过滤)
                 elif htf_b == 'short' and 60 <= pos_s <= 74:
                     counter_trend.append((r, '空', pos_s))
             counter_trend.sort(key=lambda x: -x[0]['adx'])
