@@ -837,9 +837,11 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
                 raw = r['df_15m']
                 df = normalize_ohlc_df(raw)
                 coins_data[r['base']] = df
-        coin_symbols = [c['base'] for c in coins_list] if coins_list else None
-        verdicts, dis_count = run_judge(top_n=top_n, coins=coin_symbols, compare=True, table_only=True,
-                                        coins_data=coins_data, print_verdict=False,
+        # 只审判锁妖塔通过过滤的币, 不扫全量40个
+        passed_symbols = [r['base'] for r in passed]
+        passed_data = {r['base']: coins_data[r['base']] for r in passed if r['base'] in coins_data}
+        verdicts, dis_count = run_judge(top_n=top_n, coins=passed_symbols, compare=True, table_only=True,
+                                        coins_data=passed_data, print_verdict=False,
                                         bars_per_unit=96)  # ★ 15m数据=96根/天
 
         # ── 综合推荐：锁妖塔 + 审判系统 ──
