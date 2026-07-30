@@ -464,7 +464,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     elif adx >= 12: tp1_score += 1
 
     # 方向一致性 (已由三重框架覆盖)
-    consistent = alignment >= 0.6
+    consistent = alignment >= 0.3
 
     # 市场状态
     if adx >= 25: state = '趋势'
@@ -649,7 +649,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         time.sleep(0.1)
 
     # ── 综合过滤 ──
-    passed = [r for r in results if r['consistent'] and r['adx'] >= 25]
+    passed = [r for r in results if r['consistent'] and r['adx'] >= 20]
     
     # ★ 位置与趋势冲突过滤: 做多极高且恶化中, 做空极低且恶化中 → 排除
     pos_conflict = 0
@@ -811,7 +811,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     # ── 未通过的原因统计 ──
     total = len(results)
     no_consistency = sum(1 for r in results if not r['consistent'])
-    no_adx = sum(1 for r in results if r['consistent'] and r['adx'] < 25)
+    no_adx = sum(1 for r in results if r['consistent'] and r['adx'] < 20)
 
     print(f'  {dash2}')
     print(f'  过滤统计:')
