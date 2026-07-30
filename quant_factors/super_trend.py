@@ -264,13 +264,13 @@ def detect_super_trend(feats, daily_feats=None):
     else: details['资金费率'] = '-'
 
     # ── 判定 ──
-    if bull >= 70:
+    if bull >= 50:
         label = '🔥超级做多'
-    elif bull >= 50:
+    elif bull >= 35:
         label = '📈强做多'
-    elif bear >= 70:
-        label = '🔥超级做空'
     elif bear >= 50:
+        label = '🔥超级做空'
+    elif bear >= 35:
         label = '📉强做空'
     else:
         label = '—'

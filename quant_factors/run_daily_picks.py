@@ -419,8 +419,8 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         from super_trend import detect_super_trend
         st_result = detect_super_trend(feats_15m)
         super_label = st_result['label']
-    except Exception:
-        super_label = '—'
+    except Exception as e:
+        super_label = f'—'
 
     # ★ KOL共识强度 (按持仓4-8h加权: 1H主角/15m确认/日线方向)
     def _polarity(ln, sn):
