@@ -576,59 +576,47 @@ def score_martingale(r):
 
 
 def calc_mg_params(r, balance=50):
-    """OKX马丁格尔参数 来源: 20个FMZ策略"""
+    """OKX马丁格尔参数 — 黄金比例版
+    间距 = 止盈 × 0.5~1倍 (马丁格尔黄金法则)
+    止损 = 3×8h自然波幅 (震荡币天然会回归, 不被正常波动打掉)
+    杠杆 = 3x (安全)   仓位 = 全押递减  只做50分以上币"""
     entry = r.get('entry', 0); direction = r.get('direction', 'long')
     adx = r.get('adx', 15); okx_lev = r.get('okx_lev', 10)
-    r1_val = r.get('r1', entry*1.02); s1_val = r.get('s1', entry*0.98); s2_val = r.get('s2', entry*0.95)
+    r1_v = r.get('r1', entry*1.02); s1_v = r.get('s1', entry*0.98); s2_v = r.get('s2', entry*0.95)
+    # ATR
     cdl = r.get('df_15m', []); atr_pct = 0.01
     if len(cdl) >= 15:
         cs = [c['close'] for c in cdl[-15:]]; hs = [c['high'] for c in cdl[-15:]]; ls = [c['low'] for c in cdl[-15:]]
         trs = [max(hs[i]-ls[i], abs(hs[i]-cs[i-1]), abs(ls[i]-cs[i-1])) for i in range(1, len(cs))]
         atr = sum(trs)/len(trs) if trs else entry*0.01
         atr_pct = atr/entry if entry > 0 else 0.01
-def calc_mg_params(r, balance=50):
-    """OKX马丁格尔参数 来源: 20个FMZ策略 — 单币全押版"""
-    entry = r.get('entry', 0); direction = r.get('direction', 'long')
-    adx = r.get('adx', 15); okx_lev = r.get('okx_lev', 10)
-    r1_val = r.get('r1', entry*1.02); s1_val = r.get('s1', entry*0.98); s2_val = r.get('s2', entry*0.95)
-    cdl = r.get('df_15m', []); atr_pct = 0.01
-    if len(cdl) >= 15:
-        cs = [c['close'] for c in cdl[-15:]]; hs = [c['high'] for c in cdl[-15:]]; ls = [c['low'] for c in cdl[-15:]]
-        trs = [max(hs[i]-ls[i], abs(hs[i]-cs[i-1]), abs(ls[i]-cs[i-1])) for i in range(1, len(cs))]
-        atr = sum(trs)/len(trs) if trs else entry*0.01
-        atr_pct = atr/entry if entry > 0 else 0.01
-    # 全押: 全部50U做保证金, 不留备用金
+    # 8小时自然波幅(震荡行情预估)
+    nat_vol_8h = atr_pct * 32 * 0.5  # 15m×32根 = 8h, ×0.5降噪(震荡币波幅小)
+    # 全押50U
     margin_total = balance
-    safe_lev = min(okx_lev, 5)  # 提高安全杠杆上限到5x
-    # 仓位: 首仓占40%, 递减
+    safe_lev = min(okx_lev, 3)  # 3x封顶
     layer_m = [margin_total * p for p in [0.40, 0.30, 0.20, 0.10]]
-    # 间距: ATR×2, ADX高则放宽
-    add_dist = max(atr_pct*2, 0.005)
-    if adx > 20: add_dist *= 1.5
-    add_dist = min(add_dist, 0.02 if entry > 10 else 0.06)
-    # 止盈: 更激进, 触发更快
+    # 止盈: 震荡币按R1/S2计算, 1-3%之间
     if direction == 'long':
-        tp_pct = max(min((r1_val/entry-1) if entry>0 else 0.02, 0.02), 0.005)
-        sl_pct = max(min((entry-s1_val)/entry if entry>0 else 0.03, 0.06), 0.02)
+        tp_pct = max(min((r1_v/entry-1) if entry>0 else 0.02, 0.03), 0.01)
+        sl_pct = max(nat_vol_8h * 3, 0.03)  # 止损 > 3倍自然波幅
     else:
-        tp_pct = max(min((1-s2_val/entry) if entry>0 else 0.02, 0.02), 0.005)
-        sl_pct = max(min((s2_val-entry)/entry if entry>0 else 0.03, 0.06), 0.02)
+        tp_pct = max(min((1-s2_v/entry) if entry>0 else 0.02, 0.03), 0.01)
+        sl_pct = max(nat_vol_8h * 3, 0.03)
+    # 间距 = 止盈 × 0.5~1 (黄金比例)
+    add_dist = max(tp_pct * 0.5, atr_pct*3)
+    if adx > 20: add_dist *= 1.3  # 趋势稍强则放宽
+    add_dist = min(add_dist, tp_pct * 1.2)  # 间距不超过止盈的1.2倍
     init_m = layer_m[0]; add_ms = layer_m[1:]
     add_m = sum(add_ms)/len(add_ms) if add_ms else 10
     return {'margin_init': round(init_m,2), 'margin_add': round(add_m,2),
             'add_pct': round(add_dist*100,1), 'tp_pct': round(tp_pct*100,1),
             'sl_pct': round(sl_pct*100,1), 'max_add': len(layer_m)-1,
-            'safe_lev': safe_lev, 'direction': direction, 'entry': entry}
-    init_m = layer_m[0]; add_ms = layer_m[1:]
-    add_m = sum(add_ms)/len(add_ms) if add_ms else 10
-    return {'margin_init': round(init_m,2), 'margin_add': round(add_m,2),
-            'add_pct': round(add_dist*100,1), 'tp_pct': round(tp_pct*100,1),
-            'sl_pct': round(sl_pct*100,1), 'max_add': len(layer_m)-1,
-            'safe_lev': safe_lev, 'direction': direction, 'entry': entry}
+            'safe_lev': safe_lev, 'direction': direction, 'entry': entry,
+            'nat_vol': round(nat_vol_8h*100,1)}
 
 
 def _print_martingale(results, balance=50):
-    """在锁妖塔输出末尾打印马丁格尔推荐"""
     if not results:
         print('  [马丁格尔] 无数据')
         return
@@ -660,7 +648,7 @@ def _print_martingale(results, balance=50):
     print(f'  │  入场价: ${p["entry"]:.4f}                               │')
     print(f'  ├──────────────────────────────────────────────┤')
     print(f'  │  OKX马丁格尔机器人参数:                         │')
-    print(f'  │  方向: {"做多" if p["direction"]=="long" else "做空"}    杠杆: {p["safe_lev"]}x                              │')
+    print(f'  │  方向: {"做多" if p["direction"]=="long" else "做空"}    杠杆: {p["safe_lev"]}x     8h自然波幅:{p.get("nat_vol",0)}%                   │')
     print(f'  │  首次下单保证金: ≥ {p["margin_init"]} USDT')
     print(f'  │  加仓单保证金:   ≥ {p["margin_add"]} USDT')
     print(f'  │  跌多少加仓:     {p["add_pct"]}%')
