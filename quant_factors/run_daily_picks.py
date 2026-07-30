@@ -414,6 +414,14 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         pos_score = 50; pos_speed = 0; pos_lean = 0; pos_grade = 'C'
         pos_high = 0; pos_low = 0; pos_bias = 0.0
 
+    # ★ 超级趋势识别 (20维, 纯标签不影响判断)
+    try:
+        from super_trend import detect_super_trend
+        st_result = detect_super_trend(feats_15m)
+        super_label = st_result['label']
+    except Exception:
+        super_label = '—'
+
     # ★ KOL共识强度 (按持仓4-8h加权: 1H主角/15m确认/日线方向)
     def _polarity(ln, sn):
         total = ln + sn
@@ -500,6 +508,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         'pos_low_count': pos_low,
         'pos_bias': pos_bias,
         'kol_consensus': round(kol_consensus, 4),   # KOL共识强度(持仓周期加权)
+        'super_label': super_label,                  # 超级趋势标签
         'funding_rate': fr, 'open_interest': oi,
         'okx_lev': okx_lev,
         'tp1_pct': tp1_pct,
@@ -703,7 +712,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print(f'  扫描: {len(coins_list)}币 → 基础通过: {len(results)}')
     print(f'  ✅=方向一致  ⚠️=方向冲突')
     print()
-    hdr = (f'  {"序":>2s} {"币种":<6s} {"方向":>2s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
+    hdr = (f'  {"序":>2s} {"币种":<6s} {"超级趋势":<6s} {"方向":>2s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
            f' {"RSI":>4s} {"入场价":>10s} {"止盈价":>10s} {"杠杆":>4s} {"TP1利润%":>8s}'
            f' {"15mKOL":>7s} {"1HKOL":>5s} {"日KOL":>6s} {"对齐":>6s}')
     print(hdr)
@@ -720,7 +729,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             target = r['s2']
             d_arrow = '🔴'
         profit_str = f'{r["tp1_profit"]:.0f}%'
-        print(f'  {i:>2d} {r["base"]:<6s} {d_arrow:>2s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
+        st_label = r.get('super_label', '—')
+        print(f'  {i:>2d} {r["base"]:<6s} {st_label:<6s} {d_arrow:>2s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
               f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
               f' {r["okx_lev"]:>3d}x {profit_str:>8s}'
               f' {r["m5_long"]}/{r["m5_short"]:>3d} {r["mtf_long"]}/{r["mtf_short"]:>2d}'
