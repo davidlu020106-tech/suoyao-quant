@@ -672,3 +672,229 @@ def score_entry_signals_v3(high, low, close, volume, open_p, direction,
     level='强' if total>=18 else ('弱' if total>=9 else '无')
     return {'total':total,'level':level,'signals':all_s,'details':trig,
             'breakout':sum(a.values()),'pullback':sum(b.values()),'candle':sum(c.values())}
+
+
+# ═══════════════════════════════════════
+# 第四批: ICT/SMC结构 (D1~D10)
+# ═══════════════════════════════════════
+
+def signal_fvg(high, low, close, direction):
+    """D1: FVG缺口 — 3K形成的未回补缺口被回踩
+    FMZ: FVG-Momentum-Scalping
+    看涨FVG: candle1低点 > candle3高点 → 价格回到gap区做多"""
+    n = len(close)
+    if n < 4: return 0
+    h1,h2,h3 = high[-3],high[-2],high[-1]
+    l1,l2,l3 = low[-3],low[-2],low[-1]
+    if direction == 'long':
+        gap = l1 > h3  # 上涨缺口
+        if gap and close[-1] <= l1 * 1.002 and close[-1] >= h3:
+            return 1
+    else:
+        gap = h1 < l3  # 下跌缺口
+        if gap and close[-1] >= h1 * 0.998 and close[-1] <= l3:
+            return 1
+    return 0
+
+
+def signal_order_block(open_p, high, low, close, direction):
+    """D2: 订单块 — 最后反向K被回踩
+    FMZ: Order-Block-Finder
+    看涨OB: 前下跌浪的最后阴线 → 价格回踩该K范围做多"""
+    n = len(close)
+    if n < 5: return 0
+    if direction == 'long':
+        # 找最后一次下跌的最后阴线
+        for i in range(n-2, 1, -1):
+            if close[i] < open_p[i] and close[i-1] > open_p[i-1]:
+                ob_high, ob_low = max(open_p[i], close[i]), min(open_p[i], close[i])
+                return 1 if ob_low <= close[-1] <= ob_high else 0
+    else:
+        for i in range(n-2, 1, -1):
+            if close[i] > open_p[i] and close[i-1] < open_p[i-1]:
+                ob_high, ob_low = max(open_p[i], close[i]), min(open_p[i], close[i])
+                return 1 if ob_low <= close[-1] <= ob_high else 0
+    return 0
+
+
+def signal_bos(high, low, close, direction):
+    """D3: Break of Structure — 突破前swing点
+    FMZ: SMC-EMA
+    看涨BOS: 突破最近swing高点 → 趋势延续"""
+    n = len(close)
+    if n < 6: return 0
+    if direction == 'long':
+        # 找最近swing高
+        for i in range(n-3, 2, -1):
+            if high[i] > high[i-1] and high[i] > high[i+1] and high[i] > high[i-2]:
+                return 1 if close[-1] > high[i] else 0
+    else:
+        for i in range(n-3, 2, -1):
+            if low[i] < low[i-1] and low[i] < low[i+1] and low[i] < low[i-2]:
+                return 1 if close[-1] < low[i] else 0
+    return 0
+
+
+def signal_fvg_volume(high, low, close, volume, direction):
+    """D4: FVG+放量确认
+    FMZ: Dynamic-FVG-Intraday"""
+    n = len(close)
+    if n < 4: return 0
+    vr = volume[-1] / np.mean(volume[-10:]) if np.mean(volume[-10:]) > 0 else 1
+    if vr < 1.15: return 0
+    return signal_fvg(high, low, close, direction)
+
+
+def signal_liquidity_sweep(high, low, close, direction):
+    """D5: 流动性扫荡 — 扫前高/低后反转
+    FMZ: SMC-Market-HL-Breakout
+    看涨: 价格跌破前低又快速收回 → 扫多流动性后做多"""
+    n = len(close)
+    if n < 5: return 0
+    if direction == 'long':
+        sweep_low = min(low[-5:-2])
+        swept = low[-2] < sweep_low or low[-1] < sweep_low
+        recovery = close[-1] > sweep_low
+        return 1 if swept and recovery else 0
+    else:
+        sweep_high = max(high[-5:-2])
+        swept = high[-2] > sweep_high or high[-1] > sweep_high
+        recovery = close[-1] < sweep_high
+        return 1 if swept and recovery else 0
+
+
+def signal_structure_confirm(high, low, close, direction, htf_direction=None):
+    """D6: 15m+1H结构一致
+    FMZ: TrendSync-Pro-SMC
+    如果提供了htf_direction, 只有15m BOS和HTF方向一致才触发"""
+    bos = signal_bos(high, low, close, direction)
+    if not bos: return 0
+    if htf_direction is not None:
+        return 1 if direction == htf_direction else 0
+    return 1
+
+
+def signal_fvg_atr(high, low, close, direction):
+    """D7: ATR过滤微缺口
+    FMZ: Adaptive-FVG-Detection"""
+    n = len(close)
+    if n < 4: return 0
+    tr = np.maximum(high[-14:]-low[-14:], np.abs(high[-14:]-np.roll(close[-14:],1)))
+    atr = np.mean(tr)
+    h1,h3,l1,l3 = high[-3],high[-1],low[-3],low[-1]
+    if direction == 'long':
+        gap_size = (l1 - h3) / atr if atr > 0 else 0
+        return 1 if gap_size > 0.3 and close[-1] >= h3 and close[-1] <= l1 else 0
+    else:
+        gap_size = (l3 - h1) / atr if atr > 0 else 0
+        return 1 if gap_size > 0.3 and close[-1] >= h1 and close[-1] <= l3 else 0
+
+
+def signal_fvg_ma(high, low, close, direction):
+    """D8: FVG+MA交叉区
+    FMZ: SMA-FVG-Comprehensive"""
+    n = len(close)
+    if n < 20: return 0
+    sma20 = np.mean(close[-20:])
+    if direction == 'long':
+        near_ma = abs(close[-1] - sma20) / sma20 < 0.01
+        return 1 if near_ma and signal_fvg(high, low, close, direction) else 0
+    else:
+        near_ma = abs(close[-1] - sma20) / sma20 < 0.01
+        return 1 if near_ma and signal_fvg(high, low, close, direction) else 0
+
+
+def signal_fvg_deep(high, low, close, direction):
+    """D9: FVG深度>ATR×0.3 — 只取有效缺口
+    FMZ: Advanced-FVG-Risk"""
+    n = len(close)
+    if n < 4: return 0
+    tr = np.maximum(high[-14:]-low[-14:], np.abs(high[-14:]-np.roll(close[-14:],1)))
+    atr = np.mean(tr)
+    if atr <= 0: return 0
+    if direction == 'long':
+        gap = low[-3] - high[-1]
+        if gap < atr * 0.3: return 0
+        return 1 if high[-1] <= close[-1] <= low[-3] else 0
+    else:
+        gap = low[-1] - high[-3]
+        if gap < atr * 0.3: return 0
+        return 1 if high[-3] <= close[-1] <= low[-1] else 0
+
+
+def signal_ob_macd(open_p, high, low, close, direction):
+    """D10: 订单块+MACD同向确认
+    FMZ: MACD-SMC-EMA"""
+    n = len(close)
+    if n < 30: return 0
+    ob = signal_order_block(open_p, high, low, close, direction)
+    if not ob: return 0
+    ema12 = np.mean(close[-12:]); ema26 = np.mean(close[-26:])
+    if direction == 'long':
+        return 1 if ema12 > ema26 else 0
+    return 1 if ema12 < ema26 else 0
+
+
+# ═══════════════════════════════════════
+# 综合评分 v4 (40信号 A+B+C+D, 0-40分)
+# ═══════════════════════════════════════
+
+def score_entry_signals_v4(high, low, close, volume, open_p, direction,
+                           bb_lower=None, bb_upper=None, rsi=None,
+                           htf_direction=None):
+    """40个信号综合评分, 总分0-40: >=24强/12-23弱/<12无"""
+    a={
+        'A1_通道突破': signal_donchian(high,low,close,direction),
+        'A2_ORB区间':  signal_orb(high,low,close,direction),
+        'A3_BB极端':   signal_bb_extreme(close,direction,bb_lower,bb_upper,rsi),
+        'A4_ATR突破':  signal_atr_breakout(high,low,close,direction),
+        'A5_首K通道':  signal_first_bar_channel(high,low,close,direction),
+        'A6_历史极值': signal_extreme_high(high,low,close,volume,direction),
+        'A7_分形突破': signal_fractal(high,low,close,direction),
+        'A8_三重递增': signal_triple_high(high,low,close,volume,direction),
+        'A9_动量突破': signal_momentum_breakout(high,low,close,direction),
+        'A10_KC动量':  signal_kc_momentum(high,low,close,direction),
+    }
+    b={
+        'B1_Fib回撤':  signal_fib_retrace(high,low,close,direction),
+        'B2_EMA回踩':  signal_ema_pullback(close,direction),
+        'B3_BB回归':   signal_bb_mean_revert(close,direction),
+        'B4_KC回撤':   signal_kc_pullback(high,low,close,direction),
+        'B5_RSI深回撤': signal_rsi_fib_deep(close,direction,rsi),
+        'B6_MA区间':   signal_ma_zone(close,direction),
+        'B7_Donchian底': signal_donchian_pullback(high,low,close,direction),
+        'B8_MACD反转': signal_macd_volume_reversal(close,volume,direction),
+        'B9_BB弹跳':   signal_bb_ema9_bounce(close,direction),
+        'B10_双MA回撤': signal_dual_ma_retrace(close,direction),
+    }
+    c={
+        'C1_吞没确认': signal_engulf_confirm(open_p,high,low,close,direction),
+        'C2_吞没ATR':  signal_engulf_atr(open_p,high,low,close,direction),
+        'C3_吞没比例': signal_engulf_ratio(open_p,close,direction),
+        'C4_锤子':     signal_hammer(open_p,high,low,close,direction),
+        'C5_十字星':   signal_doji(open_p,high,low,close,direction),
+        'C6_三兵':     signal_three_soldiers(open_p,close,direction),
+        'C7_刺穿线':   signal_piercing_dark(open_p,close,direction),
+        'C8_孕线':     signal_harami(open_p,close,direction),
+        'C9_Fib蜡烛':  signal_candle_at_fib(open_p,high,low,close,direction),
+        'C10_量蜡烛':  signal_volume_candle(open_p,close,volume,direction),
+    }
+    d={
+        'D1_FVG缺口':    signal_fvg(high,low,close,direction),
+        'D2_订单块OB':   signal_order_block(open_p,high,low,close,direction),
+        'D3_BOS结构':    signal_bos(high,low,close,direction),
+        'D4_FVG量确认':  signal_fvg_volume(high,low,close,volume,direction),
+        'D5_流动性扫荡': signal_liquidity_sweep(high,low,close,direction),
+        'D6_结构一致':   signal_structure_confirm(high,low,close,direction,htf_direction),
+        'D7_FVG_ATR':   signal_fvg_atr(high,low,close,direction),
+        'D8_FVG_MA':    signal_fvg_ma(high,low,close,direction),
+        'D9_FVG深度':    signal_fvg_deep(high,low,close,direction),
+        'D10_OB_MACD':  signal_ob_macd(open_p,high,low,close,direction),
+    }
+    all_s={**a,**b,**c,**d}
+    total=sum(all_s.values())
+    trig=[k for k,v in all_s.items() if v]
+    level='强' if total>=24 else ('弱' if total>=12 else '无')
+    return {'total':total,'level':level,'signals':all_s,'details':trig,
+            'breakout':sum(a.values()),'pullback':sum(b.values()),
+            'candle':sum(c.values()),'smc':sum(d.values())}
