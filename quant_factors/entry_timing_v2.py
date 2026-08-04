@@ -1350,7 +1350,7 @@ def score_entry_signals_v6(high, low, close, volume, open_p, direction,
         'E8_CCI_DMI_MACD':  signal_cci_dmi_macd(high,low,close,direction),
         'E9_3+指标共振':    signal_confluence_3plus(high,low,close,open_p,volume,direction),
         'E10_三MA排列':     signal_trend_align_3tf(high,low,close,direction),
-    }    f={
+    }; f={
         'F1_RSI背离':   signal_rsi_divergence(close,direction,rsi),
         'F2_隐藏背离':  signal_hidden_divergence(close,direction,rsi),
         'F3_MACD背离':  signal_macd_divergence(close,direction),
@@ -1370,21 +1370,6 @@ def score_entry_signals_v6(high, low, close, volume, open_p, direction,
             'breakout':sum(a.values()),'pullback':sum(b.values()),
             'candle':sum(c.values()),'smc':sum(d.values()),
             'combo':sum(e.values()),'divergence':sum(f.values())}
-
-    }
-    all_s={**a,**b,**c,**d,**e,**f}
-    total=sum(all_s.values())
-    trig=[k for k,v in all_s.items() if v]
-    level='强' if total>=36 else ('弱' if total>=18 else '无')
-    return {'total':total,'level':level,'signals':all_s,'details':trig,
-            'breakout':sum(a.values()),'pullback':sum(b.values()),
-            'candle':sum(c.values()),'smc':sum(d.values()),
-            'combo':sum(e.values()),'divergence':sum(f.values())}
-
-
-# ═══════════════════════════════════════
-# 第七批: 区间突破 (G1~G10)
-# ═══════════════════════════════════════
 
 def signal_range_breakout(high, low, close, direction, period=20):
     """G1: 矩形区间突破 — N根K线最高最低构成的区间

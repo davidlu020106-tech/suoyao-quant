@@ -714,12 +714,12 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print()
     hdr = (f'  {"序":>2s} {"币种":<6s} {"超级趋势":<6s} {"方向":>2s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
            f' {"RSI":>4s} {"入场价":>10s} {"止盈价":>10s} {"杠杆":>4s} {"TP1利润%":>8s}'
-           f' {"1HKOL":>7s} {"4HKOL":>5s} {"日KOL":>6s} {"对齐":>6s}')
+           f' {"1HKOL":>7s} {"4HKOL":>5s} {"日KOL":>6s} {"对齐":>4s} {"入场%":>5s}')
     print(hdr)
     print(f'  {dash2}')
     for i, r in enumerate(ranked, 1):
         arrow_m = '✅' if r['consistent'] else '⚠️'
-        align_short = r.get('alignment_grade', '')[:6]
+        align_short = r.get('alignment_grade', '')[:4]
         hrs_str = f'{r["adx_hours_left"]:.0f}h' if r.get("adx_hours_left", 0) > 0 else ''
         pos_str = fmt_pos(r.get('kc_pos', 0.5), r.get('pos_high_count', 0), r.get('pos_low_count', 0), r.get('pos_lean', 0), r.get('pos_speed', 0))
         if r['direction'] == 'long':
@@ -730,12 +730,24 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             d_arrow = '🔴'
         profit_str = f'{r["tp1_profit"]:.0f}%'
         st_label = r.get('super_label', '—')
+        # ★ 入场信号评分 (15m数据)
+        entry_pct = '-'
+        if 'df_15m' in r and r['df_15m']:
+            from entry_timing_v2 import score_entry_signals
+            raw = r['df_15m']
+            c_a = np.array([x['close'] for x in raw[-50:]])
+            h_a = np.array([x['high'] for x in raw[-50:]])
+            l_a = np.array([x['low'] for x in raw[-50:]])
+            v_a = np.array([x.get('volume', 1) for x in raw[-50:]])
+            o_a = np.array([x['open'] for x in raw[-50:]])
+            es = score_entry_signals(h_a, l_a, c_a, v_a, o_a, r['direction'])
+            entry_pct = f'{es["total"]}%'
         print(f'  {i:>2d} {r["base"]:<6s} {st_label:<6s} {d_arrow:>2s} {r["adx"]:>5.1f} {r.get("adx_trend",""):>2s} {hrs_str:>4s} {pos_str:<6s}'
               f' {r["rsi"]:>4.0f} {fmt_price(r["entry"]):>10s} {fmt_price(target):>10s}'
               f' {r["okx_lev"]:>3d}x {profit_str:>8s}'
               f' {r["m5_long"]}/{r["m5_short"]:>3d} {r["mtf_long"]}/{r["mtf_short"]:>2d}'
               f' {r["daily_long"]}/{r["daily_short"]:>3d}'
-              f' {arrow_m:>2s}{align_short:>4s}')
+              f' {arrow_m:>2s}{align_short:>4s} {entry_pct:>5s}')
     print()
 
     # ── 推荐 (严格过滤 TOP3) ──
