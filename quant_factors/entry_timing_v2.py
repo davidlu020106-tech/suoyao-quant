@@ -322,12 +322,12 @@ def signal_ema_pullback(close, direction, short_p=33, long_p=165):
     FMZ: EMA-Pullback"""
     n = len(close)
     if n < long_p: return 0
-    def ema(s, p):
+    def _ema(s, p):
         a = 2.0/(p+1); r = np.full_like(s, float(s[0]), dtype=float)
         for i in range(1,len(s)): r[i] = a*float(s[i]) + (1-a)*r[i-1]
         return r
-    e_short = ema(close[-long_p:], short_p)[-1]
-    e_long = ema(close[-long_p*2:], long_p)[-1]
+    e_short = _ema(close[-long_p:], short_p)[-1]
+    e_long = _ema(close[-long_p*2:], long_p)[-1]
     if direction == 'long':
         return 1 if close[-1] <= e_short * 1.01 and e_short > e_long else 0
     else:
@@ -473,3 +473,202 @@ def score_entry_signals_v2(high, low, close, volume, direction,
     level = '强' if total>=12 else ('弱' if total>=6 else '无')
     return {'total':total,'level':level,'signals':all_s,'details':trig,
             'breakout_score':sum(batch_a.values()),'pullback_score':sum(batch_b.values())}
+
+
+# ═══════════════════════════════════════
+# 第三批: K线反转形态 (C1~C10)
+# ═══════════════════════════════════════
+
+def signal_engulf_confirm(open_p, high, low, close, direction):
+    """C1: 吞没形态+前反向吞没确认
+    FMZ: 15m Engulfing Multi-Confirmation (胜率76%)"""
+    n = len(close)
+    if n < 4: return 0
+    o0,c0,h0,l0=open_p[-1],close[-1],high[-1],low[-1]
+    o1,c1=open_p[-2],close[-2]
+    body0=abs(c0-o0); body1=abs(c1-o1)
+    if direction=='long':
+        if c0>o0 and c1<o1 and c0>o1 and o0<c1 and body0>0:
+            for i in range(n-3,2,-1):
+                if close[i]<open_p[i] and close[i-1]>open_p[i-1]:
+                    return 1 if c0>high[i] else 0
+            return 1
+    else:
+        if c0<o0 and c1>o1 and c0<o1 and o0>c1 and body0>0:
+            for i in range(n-3,2,-1):
+                if close[i]>open_p[i] and close[i-1]<open_p[i-1]:
+                    return 1 if c0<low[i] else 0
+            return 1
+    return 0
+
+
+def signal_engulf_atr(open_p, high, low, close, direction):
+    """C2: 实体吞没+ATR确认
+    FMZ: 4H Engulfing+动态止盈"""
+    n=len(close)
+    if n<3:return 0
+    tr=np.maximum(high[-14:]-low[-14:],np.abs(high[-14:]-np.roll(close[-14:],1)))
+    atr=np.mean(tr)
+    body0=abs(close[-1]-open_p[-1])
+    if body0<atr*0.5:return 0
+    o0,c0,o1,c1=open_p[-1],close[-1],open_p[-2],close[-2]
+    if direction=='long':
+        return 1 if c0>o0 and c1<o1 and c0>o1 and o0<c1 else 0
+    return 1 if c0<o0 and c1>o1 and c0<o1 and o0>c1 else 0
+
+
+def signal_engulf_ratio(open_p, close, direction):
+    """C3: 吞没比例>=3x
+    FMZ: Bullish-Bearish-Engulfing"""
+    n=len(close)
+    if n<2:return 0
+    b0=abs(close[-1]-open_p[-1]);b1=abs(close[-2]-open_p[-2])
+    if b1<0.0001:return 0
+    r=b0/b1
+    if direction=='long':
+        return 1 if close[-1]>open_p[-1] and close[-2]<open_p[-2] and close[-1]>open_p[-2] and r>3 else 0
+    return 1 if close[-1]<open_p[-1] and close[-2]>open_p[-2] and close[-1]<open_p[-2] and r>3 else 0
+
+
+def signal_hammer(open_p, high, low, close, direction):
+    """C4: 锤子/Shooting Star
+    FMZ: Inverted-Hammer"""
+    n=len(close)
+    if n<5:return 0
+    c0,o0,h0,l0=close[-1],open_p[-1],high[-1],low[-1]
+    body=abs(c0-o0)
+    if body<0.0001:return 0
+    uw=h0-max(c0,o0);lw=min(c0,o0)-l0
+    if direction=='long':
+        hammer=lw>body*2.5 and uw<body*0.5
+        falling=close[-4]<close[-2] or close[-3]<close[-2]
+        return 1 if hammer and falling else 0
+    else:
+        star=uw>body*2.5 and lw<body*0.5
+        rising=close[-4]>close[-2] or close[-3]>close[-2]
+        return 1 if star and rising else 0
+
+
+def signal_doji(open_p, high, low, close, direction):
+    """C5: 十字星反转
+    FMZ: Doji Reversal"""
+    n=len(close)
+    if n<5:return 0
+    c0,o0,h0,l0=close[-1],open_p[-1],high[-1],low[-1]
+    rng=h0-l0
+    if rng<0.0001:return 0
+    if abs(c0-o0)/rng>0.1:return 0
+    if direction=='long':
+        return 1 if (close[-3]>close[-2] or close[-4]>close[-3]) and c0>l0+rng*0.3 else 0
+    return 1 if (close[-3]<close[-2] or close[-4]<close[-3]) and c0<h0-rng*0.3 else 0
+
+
+def signal_three_soldiers(open_p, close, direction):
+    """C6: 三兵/三鸦
+    FMZ: Three Soldiers/Crows"""
+    n=len(close)
+    if n<4:return 0
+    b1=abs(close[-1]-open_p[-1]);b2=abs(close[-2]-open_p[-2]);b3=abs(close[-3]-open_p[-3])
+    if direction=='long':
+        return 1 if close[-1]>open_p[-1] and close[-2]>open_p[-2] and close[-3]>open_p[-3] and b1>b2>b3 else 0
+    return 1 if close[-1]<open_p[-1] and close[-2]<open_p[-2] and close[-3]<open_p[-3] and b1>b2>b3 else 0
+
+
+def signal_piercing_dark(open_p, close, direction):
+    """C7: 刺穿线/乌云盖顶
+    FMZ: Piercing/Dark Cloud"""
+    n=len(close)
+    if n<2:return 0
+    mid=(open_p[-2]+close[-2])/2
+    if direction=='long':
+        return 1 if close[-2]<open_p[-2] and open_p[-1]<close[-2] and close[-1]>mid else 0
+    return 1 if close[-2]>open_p[-2] and open_p[-1]>close[-2] and close[-1]<mid else 0
+
+
+def signal_harami(open_p, close, direction):
+    """C8: 孕线/Harami
+    FMZ: Harami Reversal"""
+    n=len(close)
+    if n<2:return 0
+    in_body=max(close[-1],open_p[-1])<max(close[-2],open_p[-2]) and min(close[-1],open_p[-1])>min(close[-2],open_p[-2])
+    if not in_body:return 0
+    if direction=='long':
+        return 1 if close[-2]<open_p[-2] and close[-1]>open_p[-1] else 0
+    return 1 if close[-2]>open_p[-2] and close[-1]<open_p[-1] else 0
+
+
+def signal_candle_at_fib(open_p, high, low, close, direction, lookback=50):
+    """C9: Fib位蜡烛反转
+    FMZ: Fib Channel Candle"""
+    n=len(close)
+    if n<lookback:return 0
+    hh=np.max(high[-lookback:]);ll=np.min(low[-lookback:])
+    rng=hh-ll
+    if rng<=0:return 0
+    if abs(close[-1]-(hh-rng*0.5))/rng>0.04:return 0
+    if direction=='long':
+        return 1 if close[-1]>open_p[-1] and close[-2]<open_p[-2] else 0
+    return 1 if close[-1]<open_p[-1] and close[-2]>open_p[-2] else 0
+
+
+def signal_volume_candle(open_p, close, volume, direction):
+    """C10: 量确认蜡烛+放量
+    FMZ: Volume+Engulfing"""
+    n=len(close)
+    if n<3:return 0
+    vr=volume[-1]/np.mean(volume[-10:]) if np.mean(volume[-10:])>0 else 1
+    if vr<1.2:return 0
+    if direction=='long':
+        return 1 if close[-1]>open_p[-1] and close[-2]<open_p[-2] else 0
+    return 1 if close[-1]<open_p[-1] and close[-2]>open_p[-2] else 0
+
+
+# ═══════════════════════════════════════
+# 综合评分 v3 (30信号 A+B+C, 0-30分)
+# ═══════════════════════════════════════
+
+def score_entry_signals_v3(high, low, close, volume, open_p, direction,
+                           bb_lower=None, bb_upper=None, rsi=None):
+    """30个信号综合评分, 总分0-30: >=18强/9-17弱/<9无"""
+    a={
+        'A1_通道突破': signal_donchian(high,low,close,direction),
+        'A2_ORB区间':  signal_orb(high,low,close,direction),
+        'A3_BB极端':   signal_bb_extreme(close,direction,bb_lower,bb_upper,rsi),
+        'A4_ATR突破':  signal_atr_breakout(high,low,close,direction),
+        'A5_首K通道':  signal_first_bar_channel(high,low,close,direction),
+        'A6_历史极值': signal_extreme_high(high,low,close,volume,direction),
+        'A7_分形突破': signal_fractal(high,low,close,direction),
+        'A8_三重递增': signal_triple_high(high,low,close,volume,direction),
+        'A9_动量突破': signal_momentum_breakout(high,low,close,direction),
+        'A10_KC动量':  signal_kc_momentum(high,low,close,direction),
+    }
+    b={
+        'B1_Fib回撤':  signal_fib_retrace(high,low,close,direction),
+        'B2_EMA回踩':  signal_ema_pullback(close,direction),
+        'B3_BB回归':   signal_bb_mean_revert(close,direction),
+        'B4_KC回撤':   signal_kc_pullback(high,low,close,direction),
+        'B5_RSI深回撤': signal_rsi_fib_deep(close,direction,rsi),
+        'B6_MA区间':   signal_ma_zone(close,direction),
+        'B7_Donchian底': signal_donchian_pullback(high,low,close,direction),
+        'B8_MACD反转': signal_macd_volume_reversal(close,volume,direction),
+        'B9_BB弹跳':   signal_bb_ema9_bounce(close,direction),
+        'B10_双MA回撤': signal_dual_ma_retrace(close,direction),
+    }
+    c={
+        'C1_吞没确认': signal_engulf_confirm(open_p,high,low,close,direction),
+        'C2_吞没ATR':  signal_engulf_atr(open_p,high,low,close,direction),
+        'C3_吞没比例': signal_engulf_ratio(open_p,close,direction),
+        'C4_锤子':     signal_hammer(open_p,high,low,close,direction),
+        'C5_十字星':   signal_doji(open_p,high,low,close,direction),
+        'C6_三兵':     signal_three_soldiers(open_p,close,direction),
+        'C7_刺穿线':   signal_piercing_dark(open_p,close,direction),
+        'C8_孕线':     signal_harami(open_p,close,direction),
+        'C9_Fib蜡烛':  signal_candle_at_fib(open_p,high,low,close,direction),
+        'C10_量蜡烛':  signal_volume_candle(open_p,close,volume,direction),
+    }
+    all_s={**a,**b,**c}
+    total=sum(all_s.values())
+    trig=[k for k,v in all_s.items() if v]
+    level='强' if total>=18 else ('弱' if total>=9 else '无')
+    return {'total':total,'level':level,'signals':all_s,'details':trig,
+            'breakout':sum(a.values()),'pullback':sum(b.values()),'candle':sum(c.values())}
