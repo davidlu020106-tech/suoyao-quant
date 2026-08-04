@@ -66,6 +66,13 @@ def fetch_ohlc(symbol, bar='1H', limit=200):
         raw = r.get('data', [])
         if not raw: return []
         raw.reverse()
+        # ★ 丢弃最后一根进行中的蜡烛 (OKX最新一根可能尚未完成)
+        bar_seconds = {'1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,
+                       '1H':3600,'4H':14400,'1D':86400}.get(bar, 3600)
+        if raw:
+            last_ts = int(raw[-1][0]) / 1000
+            if time.time() - last_ts < bar_seconds * 0.9:
+                raw = raw[:-1]  # 正在进行中, 丢弃
         out = []
         for c in raw:
             ts = int(c[0]) / 1000
