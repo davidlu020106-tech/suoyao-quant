@@ -1380,3 +1380,265 @@ def score_entry_signals_v6(high, low, close, volume, open_p, direction,
             'breakout':sum(a.values()),'pullback':sum(b.values()),
             'candle':sum(c.values()),'smc':sum(d.values()),
             'combo':sum(e.values()),'divergence':sum(f.values())}
+
+
+# ═══════════════════════════════════════
+# 第七批: 区间突破 (G1~G10)
+# ═══════════════════════════════════════
+
+def signal_range_breakout(high, low, close, direction, period=20):
+    """G1: 矩形区间突破 — N根K线最高最低构成的区间
+    FMZ: ARGO-Range-Breakout"""
+    n = len(close)
+    if n < period+2: return 0
+    rh = np.max(high[-period-1:-1]); rl = np.min(low[-period-1:-1])
+    rng = rh - rl
+    if rng <= 0: return 0
+    # 区间必须先盘整(宽度<ATR×3)
+    tr = np.maximum(high[-14:]-low[-14:], np.abs(high[-14:]-np.roll(close[-14:],1)))
+    atr = np.mean(tr)
+    if rng > atr * 4: return 0  # 不是盘整区间是趋势
+    if direction == 'long':
+        return 1 if close[-1] > rh else 0
+    return 1 if close[-1] < rl else 0
+
+
+def signal_rsrange_breakout(high, low, close, direction, period=20):
+    """G2: RSI+区间突破确认
+    FMZ: RSI-Range-Breakout"""
+    n = len(close)
+    if n < period+2: return 0
+    if direction == 'long':
+        breakout = close[-1] > np.max(high[-period-1:-1])
+        # RSI简单确认
+        d=np.diff(close[-14:]); g=np.where(d>0,d,0); l=np.where(d<0,-d,0)
+        ag=np.mean(g); al=np.mean(l)
+        rsi_v=100-100/(1+ag/al) if al>0 else 100
+        return 1 if breakout and rsi_v > 40 else 0
+    else:
+        breakdown = close[-1] < np.min(low[-period-1:-1])
+        d=np.diff(close[-14:]); g=np.where(d>0,d,0); l=np.where(d<0,-d,0)
+        ag=np.mean(g); al=np.mean(l)
+        rsi_v=100-100/(1+ag/al) if al>0 else 100
+        return 1 if breakdown and rsi_v < 60 else 0
+
+
+def signal_macd_range(high, low, close, direction, period=20):
+    """G3: MACD+区间突破
+    FMZ: MACD-Stochastics-Range-Breakout"""
+    n = len(close)
+    if n < period+2: return 0
+    ema12 = np.mean(close[-12:]); ema26 = np.mean(close[-26:])
+    if direction == 'long':
+        breakout = close[-1] > np.max(high[-period-1:-1])
+        return 1 if breakout and ema12 > ema26 else 0
+    else:
+        breakdown = close[-1] < np.min(low[-period-1:-1])
+        return 1 if breakdown and ema12 < ema26 else 0
+
+
+def signal_consolidation_break(high, low, close, direction, period=20):
+    """G4: 盘整区间收窄后突破 — BB带宽<历史10%时突破
+    FMZ: Consolidation-Zones-Live"""
+    n = len(close)
+    if n < period+20: return 0
+    bb_w = np.std(close[-20:]) / np.mean(close[-20:])  # BB宽度
+    bb_w_hist = np.array([np.std(close[i-20:i])/np.mean(close[i-20:i]) for i in range(20,n)])
+    if len(bb_w_hist) < 10: return 0
+    tight = bb_w < np.percentile(bb_w_hist, 20)  # 底部20%
+    if not tight: return 0
+    if direction == 'long':
+        return 1 if close[-1] > np.max(high[-period-1:-1]) else 0
+    return 1 if close[-1] < np.min(low[-period-1:-1]) else 0
+
+
+def signal_triangle_breakout(high, low, close, direction, period=30):
+    """G5: 三角收敛突破 — 高点下降+低点上升后突破
+    FMZ: Triangle-Breakout-Pattern"""
+    n = len(close)
+    if n < period: return 0
+    h1 = np.max(high[-period:-period//2]); h2 = np.max(high[-period//2:])
+    l1 = np.min(low[-period:-period//2]); l2 = np.min(low[-period//2:])
+    converging = h2 < h1 and l2 > l1  # 高点降+低点升
+    if not converging: return 0
+    if direction == 'long':
+        return 1 if close[-1] > h2 else 0
+    return 1 if close[-1] < l2 else 0
+
+
+def signal_wedge_breakout(high, low, close, direction, period=30):
+    """G6: 楔形突破 — 高点+低点同时收敛后突破
+    FMZ: Falling-Wedge / Rising-Wedge"""
+    n = len(close)
+    if n < period: return 0
+    h1=np.max(high[-period:-period//2]); h2=np.max(high[-period//2:])
+    l1=np.min(low[-period:-period//2]); l2=np.min(low[-period//2:])
+    falling = h2<h1 and l2<l1  # 下降楔形(看涨)
+    rising = h2>h1 and l2>l1  # 上升楔形(看跌)
+    if direction == 'long' and falling:
+        return 1 if close[-1] > h1 else 0
+    if direction == 'short' and rising:
+        return 1 if close[-1] < l1 else 0
+    return 0
+
+
+def signal_volume_breakout_range(high, low, close, volume, direction, period=20):
+    """G7: 区间+量突破 — 区间突破+成交量为均量1.5x
+    FMZ: Volume-Confirmed-Breakout"""
+    n = len(close)
+    if n < period+2: return 0
+    rh = np.max(high[-period-1:-1]); rl = np.min(low[-period-1:-1])
+    vol_ma = np.mean(volume[-20:]); vol_r = volume[-1]/vol_ma if vol_ma>0 else 1
+    if vol_r < 1.5: return 0
+    if direction == 'long':
+        return 1 if close[-1] > rh else 0
+    return 1 if close[-1] < rl else 0
+
+
+def signal_channel_breakout(high, low, close, direction, period=30):
+    """G8: 通道突破 — 回归通道上下轨突破
+    FMZ: T3-Channel-Breakout"""
+    n = len(close)
+    if n < period: return 0
+    # 线性回归通道
+    x = np.arange(period); y = close[-period:]
+    slope, intercept = np.polyfit(x, y, 1)
+    midline = slope * x + intercept
+    residuals = y - midline
+    std = np.std(residuals)
+    upper = midline[-1] + 2*std; lower = midline[-1] - 2*std
+    if direction == 'long':
+        return 1 if close[-1] > upper else 0
+    return 1 if close[-1] < lower else 0
+
+
+def signal_fakeout_reversal(high, low, close, direction):
+    """G9: 假突破反转 — 突破后快速收回
+    FMZ: False-Breakout-Reversal
+    做多: 先跌破区间低点 → 再收回区间内"""
+    n = len(close)
+    if n < 8: return 0
+    rng_hi = np.max(high[-8:-3]); rng_lo = np.min(low[-8:-3])
+    if direction == 'long':
+        broke_down = any(low[i] < rng_lo for i in range(-3,0))
+        recovered = close[-1] > rng_lo
+        return 1 if broke_down and recovered else 0
+    else:
+        broke_up = any(high[i] > rng_hi for i in range(-3,0))
+        recovered = close[-1] < rng_hi
+        return 1 if broke_up and recovered else 0
+
+
+def signal_adx_range_break(high, low, close, direction, adx=None):
+    """G10: ADX区间突破 — ADX从低(<20)突破区间
+    FMZ: ADX-Range-Expansion"""
+    n = len(close)
+    if n < 20: return 0
+    adx_v = adx if adx is not None else 20
+    if adx_v > 20: return 0  # 已经是趋势, 不是区间突破
+    rh = np.max(high[-19:-1]); rl = np.min(low[-19:-1])
+    if direction == 'long':
+        return 1 if close[-1] > rh and adx_v < 20 else 0
+    return 1 if close[-1] < rl and adx_v < 20 else 0
+
+
+# ═══════════════════════════════════════
+# 综合评分 v7 (70信号, 0-70分)
+# ═══════════════════════════════════════
+
+def score_entry_signals_v7(high, low, close, volume, open_p, direction,
+                           bb_lower=None, bb_upper=None, rsi=None, adx=None,
+                           htf_direction=None):
+    """70信号, >=42强/21-41弱/<21无"""
+    a={...};b={...};c={...};d={...};e={...};f={...}  # 同v6 via score_v6
+    g={
+        'G1_区间突破':   signal_range_breakout(high,low,close,direction),
+        'G2_RSI区间':    signal_rsrange_breakout(high,low,close,direction),
+        'G3_MACD区间':   signal_macd_range(high,low,close,direction),
+        'G4_盘整突破':   signal_consolidation_break(high,low,close,direction),
+        'G5_三角突破':   signal_triangle_breakout(high,low,close,direction),
+        'G6_楔形突破':   signal_wedge_breakout(high,low,close,direction),
+        'G7_量区间':     signal_volume_breakout_range(high,low,close,volume,direction),
+        'G8_通道突破':   signal_channel_breakout(high,low,close,direction),
+        'G9_假突破反转': signal_fakeout_reversal(high,low,close,direction),
+        'G10_ADX区间':   signal_adx_range_break(high,low,close,direction,adx),
+    }
+    # 用v6的a-f(复用score_v6的构建逻辑)
+    from_collect = score_entry_signals_v6.__code__  # can't access like this
+    # Fallback: rebuild minimal a-f
+    a={
+        'A1_通道突破': signal_donchian(high,low,close,direction),
+        'A2_ORB区间':  signal_orb(high,low,close,direction),
+        'A3_BB极端':   signal_bb_extreme(close,direction,bb_lower,bb_upper,rsi),
+        'A4_ATR突破':  signal_atr_breakout(high,low,close,direction),
+        'A5_首K通道':  signal_first_bar_channel(high,low,close,direction),
+        'A6_历史极值': signal_extreme_high(high,low,close,volume,direction),
+        'A7_分形突破': signal_fractal(high,low,close,direction),
+        'A8_三重递增': signal_triple_high(high,low,close,volume,direction),
+        'A9_动量突破': signal_momentum_breakout(high,low,close,direction),
+        'A10_KC动量':  signal_kc_momentum(high,low,close,direction),
+    }; b={
+        'B1_Fib回撤':  signal_fib_retrace(high,low,close,direction),
+        'B2_EMA回踩':  signal_ema_pullback(close,direction),
+        'B3_BB回归':   signal_bb_mean_revert(close,direction),
+        'B4_KC回撤':   signal_kc_pullback(high,low,close,direction),
+        'B5_RSI深回撤': signal_rsi_fib_deep(close,direction,rsi),
+        'B6_MA区间':   signal_ma_zone(close,direction),
+        'B7_Donchian底': signal_donchian_pullback(high,low,close,direction),
+        'B8_MACD反转': signal_macd_volume_reversal(close,volume,direction),
+        'B9_BB弹跳':   signal_bb_ema9_bounce(close,direction),
+        'B10_双MA回撤': signal_dual_ma_retrace(close,direction),
+    }; c={
+        'C1_吞没确认': signal_engulf_confirm(open_p,high,low,close,direction),
+        'C2_吞没ATR':  signal_engulf_atr(open_p,high,low,close,direction),
+        'C3_吞没比例': signal_engulf_ratio(open_p,close,direction),
+        'C4_锤子':     signal_hammer(open_p,high,low,close,direction),
+        'C5_十字星':   signal_doji(open_p,high,low,close,direction),
+        'C6_三兵':     signal_three_soldiers(open_p,close,direction),
+        'C7_刺穿线':   signal_piercing_dark(open_p,close,direction),
+        'C8_孕线':     signal_harami(open_p,close,direction),
+        'C9_Fib蜡烛':  signal_candle_at_fib(open_p,high,low,close,direction),
+        'C10_量蜡烛':  signal_volume_candle(open_p,close,volume,direction),
+    }; d={
+        'D1_FVG缺口':    signal_fvg(high,low,close,direction),
+        'D2_订单块OB':   signal_order_block(open_p,high,low,close,direction),
+        'D3_BOS结构':    signal_bos(high,low,close,direction),
+        'D4_FVG量确认':  signal_fvg_volume(high,low,close,volume,direction),
+        'D5_流动性扫荡': signal_liquidity_sweep(high,low,close,direction),
+        'D6_结构一致':   signal_structure_confirm(high,low,close,direction,htf_direction),
+        'D7_FVG_ATR':   signal_fvg_atr(high,low,close,direction),
+        'D8_FVG_MA':    signal_fvg_ma(high,low,close,direction),
+        'D9_FVG深度':    signal_fvg_deep(high,low,close,direction),
+        'D10_OB_MACD':  signal_ob_macd(open_p,high,low,close,direction),
+    }; e={
+        'E1_BB_RSI_ADX':    signal_bb_rsi_adx(close,high,low,direction,rsi,adx),
+        'E2_EMA_MACD_ST':   signal_ema_macd_supertrend(close,high,low,direction),
+        'E3_RSI_Stoch_KC':  signal_rsi_stoch_kc(close,high,low,direction,rsi),
+        'E4_ADX_RSI_SMA':   signal_adx_rsi_sma(close,direction,rsi,adx),
+        'E5_EMA_RSI_TA':    signal_ema_rsi_ta(close,direction,rsi),
+        'E6_MA_MACD_BB':    signal_ma_macd_bb(close,direction),
+        'E7_ST_ADX_ATR':    signal_supertrend_adx_atr(high,low,close,direction,adx),
+        'E8_CCI_DMI_MACD':  signal_cci_dmi_macd(high,low,close,direction),
+        'E9_3+指标共振':    signal_confluence_3plus(high,low,close,open_p,volume,direction),
+        'E10_三MA排列':     signal_trend_align_3tf(high,low,close,direction),
+    }; f={
+        'F1_RSI背离':   signal_rsi_divergence(close,direction,rsi),
+        'F2_隐藏背离':  signal_hidden_divergence(close,direction,rsi),
+        'F3_MACD背离':  signal_macd_divergence(close,direction),
+        'F4_CCI背离':   signal_cci_divergence(high,low,close,direction),
+        'F5_OBV背离':   signal_obv_divergence(close,volume,direction),
+        'F6_动量背离':  signal_price_divergence(close,direction),
+        'F7_量背离':    signal_volume_divergence(close,volume,direction),
+        'F8_PPO背离':   signal_ppo_divergence(close,direction),
+        'F9_双背离':    signal_double_divergence(close,direction,rsi),
+        'F10_极端背离': signal_extreme_divergence(close,direction,rsi),
+    }
+    all_s = {**a,**b,**c,**d,**e,**f,**g}
+    total = sum(all_s.values())
+    trig = [k for k,v in all_s.items() if v]
+    level = '强' if total>=42 else ('弱' if total>=21 else '无')
+    return {'total':total,'level':level,'signals':all_s,'details':trig,
+            'breakout':sum(a.values()),'pullback':sum(b.values()),
+            'candle':sum(c.values()),'smc':sum(d.values()),
+            'combo':sum(e.values()),'divergence':sum(f.values()),
+            'range':sum(g.values())}
