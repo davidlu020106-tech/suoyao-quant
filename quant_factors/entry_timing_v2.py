@@ -1642,3 +1642,254 @@ def score_entry_signals_v7(high, low, close, volume, open_p, direction,
             'candle':sum(c.values()),'smc':sum(d.values()),
             'combo':sum(e.values()),'divergence':sum(f.values()),
             'range':sum(g.values())}
+
+
+# ═══════════════════════════════════════
+# 第八批: 均线/VWAP弹跳 (H1~H10)
+# ═══════════════════════════════════════
+
+def signal_dynamic_sr_bounce(high, low, close, direction):
+    """H1: 动态支撑阻力弹跳 — 价格回踩近期高低点后反弹
+    FMZ: Dynamic-Support-Resistance-Trading"""
+    n = len(close)
+    if n < 20: return 0
+    sr_high = np.max(high[-10:-1]); sr_low = np.min(low[-10:-1])
+    if direction == 'long':
+        near_support = abs(close[-1] - sr_low) / sr_low < 0.01 if sr_low>0 else False
+        rising = close[-1] > close[-2]
+        return 1 if near_support and rising else 0
+    else:
+        near_resist = abs(close[-1] - sr_high) / sr_high < 0.01 if sr_high>0 else False
+        falling = close[-1] < close[-2]
+        return 1 if near_resist and falling else 0
+
+
+def signal_vwap_bounce(close, volume, direction):
+    """H2: VWAP均值回归 — 偏离VWAP后反弹
+    FMZ: VWAP-Reversion"""
+    n = len(close)
+    if n < 48: return 0
+    pv = np.sum(close[-48:] * volume[-48:]); sv = np.sum(volume[-48:])
+    vwap = pv / sv if sv > 0 else close[-1]
+    dev = (close[-1] / vwap - 1) * 100
+    if direction == 'long':
+        return 1 if dev < -1.5 and close[-1] > close[-2] else 0
+    return 1 if dev > 1.5 and close[-1] < close[-2] else 0
+
+
+def signal_ma_cross_support(close, direction):
+    """H3: MA金叉后回踩支撑
+    FMZ: MA-Crossover-Support"""
+    n = len(close)
+    if n < 30: return 0
+    ma10 = np.mean(close[-10:]); ma20 = np.mean(close[-20:])
+    if direction == 'long':
+        cross_up = np.mean(close[-15:-5]) < np.mean(close[-25:-5]) and ma10 > ma20
+        return 1 if cross_up and close[-1] > ma20 and abs(close[-1]-ma20)/ma20<0.01 else 0
+    else:
+        cross_dn = np.mean(close[-15:-5]) > np.mean(close[-25:-5]) and ma10 < ma20
+        return 1 if cross_dn and close[-1] < ma20 and abs(close[-1]-ma20)/ma20<0.01 else 0
+
+
+def signal_bb_bounce(close, direction):
+    """H4: BB带弹跳 — 触轨后反向运动
+    FMZ: Bollinger-Bounce"""
+    n = len(close)
+    if n < 20: return 0
+    sma = np.mean(close[-20:]); std = np.std(close[-20:])
+    lower = sma - 2*std; upper = sma + 2*std
+    if direction == 'long':
+        touched = any(close[i] < lower for i in range(-3,0))
+        return 1 if touched and close[-1] > close[-2] else 0
+    else:
+        touched = any(close[i] > upper for i in range(-3,0))
+        return 1 if touched and close[-1] < close[-2] else 0
+
+
+def signal_pivot_bounce(high, low, close, direction):
+    """H5: Pivot点弹跳 — 价格回踩Pivot S1/R1后反弹
+    FMZ: Dynamic-Pivot-Point"""
+    n = len(close)
+    if n < 5: return 0
+    pv = (np.max(high[-5:]) + np.min(low[-5:]) + close[-1]) / 3
+    r1 = 2*pv - np.min(low[-5:]); s1 = 2*pv - np.max(high[-5:])
+    if direction == 'long':
+        return 1 if abs(close[-1]-s1)/s1<0.01 and close[-1]>close[-2] else 0
+    return 1 if abs(close[-1]-r1)/r1<0.01 and close[-1]<close[-2] else 0
+
+
+def signal_sma_bounce(close, direction, period=20):
+    """H6: SMA弹跳 — 价格触SMA后确认反弹
+    FMZ: SMA-Support-Bounce"""
+    n = len(close)
+    if n < period+3: return 0
+    sma = np.mean(close[-period:])
+    if direction == 'long':
+        near = abs(close[-1]-sma)/sma < 0.005 if sma>0 else False
+        green = close[-1] > open_p[-1] if 'open_p' in dir() else close[-1]>close[-2]
+        return 1 if near and green else 0
+    else:
+        near = abs(close[-1]-sma)/sma < 0.005 if sma>0 else False
+        red = close[-1] < close[-2]
+        return 1 if near and red else 0
+
+
+def signal_ema_bounce(close, direction, period=21):
+    """H7: EMA弹跳 — 趋势中价格回踩EMA21
+    FMZ: EMA-Support"""
+    n = len(close)
+    if n < period+3: return 0
+    a=2.0/(period+1); ema=close[-period]
+    for i in range(-period+1,0): ema=a*close[i]+(1-a)*ema
+    if direction == 'long':
+        return 1 if abs(close[-1]-ema)/ema<0.008 and close[-1]>close[-2] else 0
+    return 1 if abs(close[-1]-ema)/ema<0.008 and close[-1]<close[-2] else 0
+
+
+def signal_multitf_support(high, low, close, direction):
+    """H8: 多周期支撑 — 15m支撑与1H方向一致
+    FMZ: Dual-Timeframe-Dynamic-Support
+    做多: 15m触及近期低点+1H看多→支撑有效"""
+    n = len(close)
+    if n < 50: return 0
+    local_low = np.min(low[-10:])
+    ma50 = np.mean(close[-50:])
+    if direction == 'long':
+        near_low = abs(close[-1]-local_low)/local_low<0.01 if local_low>0 else False
+        htf_up = close[-1] > ma50
+        return 1 if near_low and htf_up else 0
+    else:
+        local_high = np.max(high[-10:])
+        near_high = abs(close[-1]-local_high)/local_high<0.01 if local_high>0 else False
+        htf_dn = close[-1] < ma50
+        return 1 if near_high and htf_dn else 0
+
+
+def signal_anchored_vwap(close, volume, direction, anchor=48):
+    """H9: 锚定VWAP — 从近期swing高低点算VWAP
+    FMZ: Anchored-VWAP"""
+    n = len(close)
+    if n < anchor: return 0
+    pv = np.sum(close[-anchor:] * volume[-anchor:]); sv = np.sum(volume[-anchor:])
+    avwap = pv / sv if sv > 0 else close[-1]
+    if direction == 'long':
+        return 1 if close[-1] < avwap and close[-1] > close[-2] else 0
+    return 1 if close[-1] > avwap and close[-1] < close[-2] else 0
+
+
+def signal_kc_mid_bounce(high, low, close, direction):
+    """H10: Keltner中轨弹跳 — 趋势中价格回踩KC中轨
+    FMZ: Keltner-Midline-Bounce"""
+    n = len(close)
+    if n < 20: return 0
+    ema20 = np.mean(close[-20:])
+    tr = np.maximum(high[-14:]-low[-14:], np.abs(high[-14:]-np.roll(close[-14:],1)))
+    atr = np.mean(tr)
+    if direction == 'long':
+        near_mid = abs(close[-1]-ema20)/atr < 0.3 if atr>0 else False
+        rising = close[-1] > close[-2]
+        return 1 if near_mid and rising and close[-1] > ema20 - 1.5*atr else 0
+    else:
+        near_mid = abs(close[-1]-ema20)/atr < 0.3 if atr>0 else False
+        falling = close[-1] < close[-2]
+        return 1 if near_mid and falling and close[-1] < ema20 + 1.5*atr else 0
+
+
+# ═══════════════════════════════════════
+# v8 (80信号, 0-80)
+# ═══════════════════════════════════════
+
+def score_entry_signals_v8(high, low, close, volume, open_p, direction,
+                           bb_lower=None, bb_upper=None, rsi=None, adx=None,
+                           htf_direction=None):
+    """80信号, >=48强/24-47弱/<24无"""
+    a={'A1_通道突破':signal_donchian(high,low,close,direction),
+       'A2_ORB区间':signal_orb(high,low,close,direction),
+       'A3_BB极端':signal_bb_extreme(close,direction,bb_lower,bb_upper,rsi),
+       'A4_ATR突破':signal_atr_breakout(high,low,close,direction),
+       'A5_首K通道':signal_first_bar_channel(high,low,close,direction),
+       'A6_历史极值':signal_extreme_high(high,low,close,volume,direction),
+       'A7_分形突破':signal_fractal(high,low,close,direction),
+       'A8_三重递增':signal_triple_high(high,low,close,volume,direction),
+       'A9_动量突破':signal_momentum_breakout(high,low,close,direction),
+       'A10_KC动量':signal_kc_momentum(high,low,close,direction)}
+    b={'B1_Fib回撤':signal_fib_retrace(high,low,close,direction),
+       'B2_EMA回踩':signal_ema_pullback(close,direction),
+       'B3_BB回归':signal_bb_mean_revert(close,direction),
+       'B4_KC回撤':signal_kc_pullback(high,low,close,direction),
+       'B5_RSI深回撤':signal_rsi_fib_deep(close,direction,rsi),
+       'B6_MA区间':signal_ma_zone(close,direction),
+       'B7_Donchian底':signal_donchian_pullback(high,low,close,direction),
+       'B8_MACD反转':signal_macd_volume_reversal(close,volume,direction),
+       'B9_BB弹跳':signal_bb_ema9_bounce(close,direction),
+       'B10_双MA回撤':signal_dual_ma_retrace(close,direction)}
+    c={'C1_吞没确认':signal_engulf_confirm(open_p,high,low,close,direction),
+       'C2_吞没ATR':signal_engulf_atr(open_p,high,low,close,direction),
+       'C3_吞没比例':signal_engulf_ratio(open_p,close,direction),
+       'C4_锤子':signal_hammer(open_p,high,low,close,direction),
+       'C5_十字星':signal_doji(open_p,high,low,close,direction),
+       'C6_三兵':signal_three_soldiers(open_p,close,direction),
+       'C7_刺穿线':signal_piercing_dark(open_p,close,direction),
+       'C8_孕线':signal_harami(open_p,close,direction),
+       'C9_Fib蜡烛':signal_candle_at_fib(open_p,high,low,close,direction),
+       'C10_量蜡烛':signal_volume_candle(open_p,close,volume,direction)}
+    d={'D1_FVG缺口':signal_fvg(high,low,close,direction),
+       'D2_订单块OB':signal_order_block(open_p,high,low,close,direction),
+       'D3_BOS结构':signal_bos(high,low,close,direction),
+       'D4_FVG量确认':signal_fvg_volume(high,low,close,volume,direction),
+       'D5_流动性扫荡':signal_liquidity_sweep(high,low,close,direction),
+       'D6_结构一致':signal_structure_confirm(high,low,close,direction,htf_direction),
+       'D7_FVG_ATR':signal_fvg_atr(high,low,close,direction),
+       'D8_FVG_MA':signal_fvg_ma(high,low,close,direction),
+       'D9_FVG深度':signal_fvg_deep(high,low,close,direction),
+       'D10_OB_MACD':signal_ob_macd(open_p,high,low,close,direction)}
+    e={'E1_BB_RSI_ADX':signal_bb_rsi_adx(close,high,low,direction,rsi,adx),
+       'E2_EMA_MACD_ST':signal_ema_macd_supertrend(close,high,low,direction),
+       'E3_RSI_Stoch_KC':signal_rsi_stoch_kc(close,high,low,direction,rsi),
+       'E4_ADX_RSI_SMA':signal_adx_rsi_sma(close,direction,rsi,adx),
+       'E5_EMA_RSI_TA':signal_ema_rsi_ta(close,direction,rsi),
+       'E6_MA_MACD_BB':signal_ma_macd_bb(close,direction),
+       'E7_ST_ADX_ATR':signal_supertrend_adx_atr(high,low,close,direction,adx),
+       'E8_CCI_DMI_MACD':signal_cci_dmi_macd(high,low,close,direction),
+       'E9_3+指标共振':signal_confluence_3plus(high,low,close,open_p,volume,direction),
+       'E10_三MA排列':signal_trend_align_3tf(high,low,close,direction)}
+    f={'F1_RSI背离':signal_rsi_divergence(close,direction,rsi),
+       'F2_隐藏背离':signal_hidden_divergence(close,direction,rsi),
+       'F3_MACD背离':signal_macd_divergence(close,direction),
+       'F4_CCI背离':signal_cci_divergence(high,low,close,direction),
+       'F5_OBV背离':signal_obv_divergence(close,volume,direction),
+       'F6_动量背离':signal_price_divergence(close,direction),
+       'F7_量背离':signal_volume_divergence(close,volume,direction),
+       'F8_PPO背离':signal_ppo_divergence(close,direction),
+       'F9_双背离':signal_double_divergence(close,direction,rsi),
+       'F10_极端背离':signal_extreme_divergence(close,direction,rsi)}
+    g={'G1_区间突破':signal_range_breakout(high,low,close,direction),
+       'G2_RSI区间':signal_rsrange_breakout(high,low,close,direction),
+       'G3_MACD区间':signal_macd_range(high,low,close,direction),
+       'G4_盘整突破':signal_consolidation_break(high,low,close,direction),
+       'G5_三角突破':signal_triangle_breakout(high,low,close,direction),
+       'G6_楔形突破':signal_wedge_breakout(high,low,close,direction),
+       'G7_量区间':signal_volume_breakout_range(high,low,close,volume,direction),
+       'G8_通道突破':signal_channel_breakout(high,low,close,direction),
+       'G9_假突破反转':signal_fakeout_reversal(high,low,close,direction),
+       'G10_ADX区间':signal_adx_range_break(high,low,close,direction,adx)}
+    h={
+        'H1_动态SR弹跳': signal_dynamic_sr_bounce(high,low,close,direction),
+        'H2_VWAP回归':  signal_vwap_bounce(close,volume,direction),
+        'H3_MA金叉支撑': signal_ma_cross_support(close,direction),
+        'H4_BB弹跳':    signal_bb_bounce(close,direction),
+        'H5_Pivot弹跳': signal_pivot_bounce(high,low,close,direction),
+        'H6_SMA弹跳':   signal_sma_bounce(close,direction),
+        'H7_EMA21弹跳': signal_ema_bounce(close,direction),
+        'H8_多TF支撑':  signal_multitf_support(high,low,close,direction),
+        'H9_锚定VWAP':  signal_anchored_vwap(close,volume,direction),
+        'H10_KC中轨':   signal_kc_mid_bounce(high,low,close,direction),
+    }
+    all_s={**a,**b,**c,**d,**e,**f,**g,**h}
+    total=sum(all_s.values()); trig=[k for k,v in all_s.items() if v]
+    level='强' if total>=48 else ('弱' if total>=24 else '无')
+    return {'total':total,'level':level,'signals':all_s,'details':trig,
+            'breakout':sum(a.values()),'pullback':sum(b.values()),
+            'candle':sum(c.values()),'smc':sum(d.values()),
+            'combo':sum(e.values()),'divergence':sum(f.values()),
+            'range':sum(g.values()),'bounce':sum(h.values())}
