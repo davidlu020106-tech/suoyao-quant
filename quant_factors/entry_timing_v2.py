@@ -2030,3 +2030,174 @@ def signal_momentum_squeeze_break(close, direction):
         return 1 if (direction=='long' and close[-1]>ma and close[-1]>close[-2]) or (direction=='short' and close[-1]<ma and close[-1]<close[-2]) else 0
     return 0
 
+
+
+# ═══════════════════════════════════════
+# 第十批: 量价配合 (J1~J10)
+# ═══════════════════════════════════════
+
+def signal_volume_confirm(close, volume, direction):
+    """J1: 放量确认 — 价格突破+成交量放大>1.5x
+    FMZ: Volume-Breakout-Confirmation"""
+    n = len(close)
+    if n < 20: return 0
+    vol_ma = np.mean(volume[-20:]); vol_r = volume[-1]/vol_ma if vol_ma>0 else 1
+    if vol_r < 1.5: return 0
+    return 1 if (direction=='long' and close[-1]>close[-2]) or (direction=='short' and close[-1]<close[-2]) else 0
+
+
+def signal_obv_trend(close, volume, direction):
+    """J2: OBV趋势确认 — OBV与价格同向
+    FMZ: OBV-MACD-Indicator"""
+    n = len(close)
+    if n < 10: return 0
+    obv = np.zeros(n); obv[0] = volume[0]
+    for i in range(1, n):
+        if close[i] > close[i-1]: obv[i] = obv[i-1] + volume[i]
+        elif close[i] < close[i-1]: obv[i] = obv[i-1] - volume[i]
+        else: obv[i] = obv[i-1]
+    obv_ma5 = np.mean(obv[-5:]); obv_ma10 = np.mean(obv[-10:])
+    if direction == 'long':
+        return 1 if obv_ma5 > obv_ma10 and close[-1] > close[-5] else 0
+    return 1 if obv_ma5 < obv_ma10 and close[-1] < close[-5] else 0
+
+
+def signal_mfi_flow(high, low, close, volume, direction):
+    """J3: MFI资金流 — Money Flow Index>80或<20
+    FMZ: MFI-Based-Reversal"""
+    n = len(close)
+    if n < 14: return 0
+    tp = (high[-14:] + low[-14:] + close[-14:]) / 3
+    mf = tp * volume[-14:]; pmf = np.sum(np.where(np.diff(np.concatenate([[tp[0]],tp]))>0, mf, 0))
+    nmf = np.sum(np.where(np.diff(np.concatenate([[tp[0]],tp]))<0, mf, 0))
+    mfi = 100 - 100/(1+pmf/max(nmf,0.001))
+    if direction == 'long':
+        return 1 if mfi < 25 else 0
+    return 1 if mfi > 75 else 0
+
+
+def signal_volume_climax(close, volume, direction):
+    """J4: 成交量顶峰 — 暴量+价格方向确认，可能趋势结束
+    FMZ: Volume-Climax-Reversal"""
+    n = len(close)
+    if n < 20: return 0
+    vol_ma = np.mean(volume[-20:]); vol_r = volume[-1]/vol_ma if vol_ma>0 else 1
+    if vol_r < 3.0: return 0  # 3倍以上才叫climax
+    if direction == 'long':
+        return 1 if close[-1] < close[-2] else 0  # 暴量跌→空头climax→看涨
+    return 1 if close[-1] > close[-2] else 0  # 暴量涨→多头climax→看跌
+
+
+def signal_vpt_confirm(close, volume, direction):
+    """J5: VPT量价趋势 — Volume Price Trend
+    FMZ: PVT-EMA-Trend"""
+    n = len(close)
+    if n < 10: return 0
+    vpt = np.zeros(n)
+    for i in range(1, n):
+        vpt[i] = vpt[i-1] + volume[i] * (close[i]-close[i-1])/close[i-1] if close[i-1]>0 else vpt[i-1]
+    if direction == 'long':
+        return 1 if vpt[-1] > vpt[-5] and close[-1] > close[-5] else 0
+    return 1 if vpt[-1] < vpt[-5] and close[-1] < close[-5] else 0
+
+
+def signal_ad_line(high, low, close, volume, direction):
+    """J6: A/D线 — 累积/派发
+    FMZ: Accumulation-Distribution"""
+    n = len(close)
+    if n < 10: return 0
+    ad = np.zeros(n)
+    for i in range(n):
+        hl = high[i]-low[i] if high[i]>low[i] else 0.0001
+        clv = ((close[i]-low[i])-(high[i]-close[i]))/hl
+        ad[i] = clv * volume[i]
+    cum_ad = np.cumsum(ad[-10:])[-1]
+    if direction == 'long':
+        return 1 if cum_ad > 0 and close[-1] > close[-5] else 0
+    return 1 if cum_ad < 0 and close[-1] < close[-5] else 0
+
+
+def signal_cmf_flow(high, low, close, volume, direction):
+    """J7: CMF资金流 — Chaikin Money Flow
+    FMZ: CMF-Indicator"""
+    n = len(close)
+    if n < 20: return 0
+    mfv = np.zeros(20)
+    for i in range(20):
+        idx = -20+i
+        hl = high[idx]-low[idx] if high[idx]>low[idx] else 0.0001
+        mfv[i] = ((close[idx]-low[idx])-(high[idx]-close[idx]))/hl * volume[idx]
+    cmf = np.sum(mfv[-20:])/np.sum(volume[-20:]) if np.sum(volume[-20:])>0 else 0
+    if direction == 'long':
+        return 1 if cmf > 0.1 else 0
+    return 1 if cmf < -0.1 else 0
+
+
+def signal_volume_support(high, low, close, volume, direction):
+    """J8: 量支撑/阻力 — 关键位放量
+    FMZ: Volume-at-Support"""
+    n = len(close)
+    if n < 20: return 0
+    vol_ma = np.mean(volume[-20:]); vol_r = volume[-1]/vol_ma if vol_ma>0 else 1
+    if vol_r < 1.3: return 0
+    sma20 = np.mean(close[-20:])
+    if direction == 'long':
+        near_ma = abs(close[-1]-sma20)/sma20 < 0.01 if sma20>0 else False
+        return 1 if near_ma and close[-1] > close[-2] else 0
+    else:
+        near_ma = abs(close[-1]-sma20)/sma20 < 0.01 if sma20>0 else False
+        return 1 if near_ma and close[-1] < close[-2] else 0
+
+
+def signal_ease_of_movement(high, low, volume, close, direction):
+    """J9: EOM容易移动指标 — 低量也能推动价格
+    FMZ: Ease-of-Movement"""
+    n = len(close)
+    if n < 2: return 0
+    hl = high[-1] - low[-1] if high[-1] > low[-1] else 0.0001
+    eom = (hl) / (volume[-1] / 1000000) if volume[-1] > 0 else 0
+    eom = eom * (1 if close[-1] > close[-2] else -1)
+    if direction == 'long':
+        return 1 if eom > 0.5 else 0
+    return 1 if eom < -0.5 else 0
+
+
+def signal_volume_profile_confirm(close, volume, direction):
+    """J10: 成交量分布确认 — 当前价格在高成交量节点上
+    FMZ: Volume-Profile-Confirmation"""
+    n = len(close)
+    if n < 20: return 0
+    # 找到过去20根K线的成交量最大价格区间
+    bins = np.linspace(np.min(close[-20:]), np.max(close[-20:]), 10)
+    vol_by_bin = np.zeros(9)
+    for i in range(9):
+        mask = (close[-20:] >= bins[i]) & (close[-20:] < bins[i+1])
+        vol_by_bin[i] = np.sum(volume[-20:][mask[:-1] if len(mask)>20 else mask])
+    max_bin = np.argmax(vol_by_bin)
+    poc = (bins[max_bin] + bins[max_bin+1]) / 2
+    near_poc = abs(close[-1] - poc) / poc < 0.02 if poc>0 else False
+    if not near_poc: return 0
+    return 1 if (direction=='long' and close[-1]>close[-2]) or (direction=='short' and close[-1]<close[-2]) else 0
+
+
+# ═══════════════════════════════════════
+# 终极评分 v10 (100信号, 0-100)
+# ═══════════════════════════════════════
+
+def score_entry_signals(high, low, close, volume, open_p, direction,
+                        bb_lower=None, bb_upper=None, rsi=None, adx=None,
+                        htf_direction=None):
+    """100个信号终极评分, 总分0-100: >=60强/30-59弱/<30无"""
+    a={...TBD...}
+    j={
+        'J1_放量确认': signal_volume_confirm(close,volume,direction),
+        'J2_OBV趋势':  signal_obv_trend(close,volume,direction),
+        'J3_MFI资金流': signal_mfi_flow(high,low,close,volume,direction),
+        'J4_量顶点':    signal_volume_climax(close,volume,direction),
+        'J5_VPT量价':   signal_vpt_confirm(close,volume,direction),
+        'J6_AD线':     signal_ad_line(high,low,close,volume,direction),
+        'J7_CMF资金流': signal_cmf_flow(high,low,close,volume,direction),
+        'J8_量支撑':    signal_volume_support(high,low,close,volume,direction),
+        'J9_EOM容易移动': signal_ease_of_movement(high,low,volume,close,direction),
+        'J10_量分布POC': signal_volume_profile_confirm(close,volume,direction),
+    }
