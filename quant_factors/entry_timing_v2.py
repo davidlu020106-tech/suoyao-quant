@@ -898,3 +898,227 @@ def score_entry_signals_v4(high, low, close, volume, open_p, direction,
     return {'total':total,'level':level,'signals':all_s,'details':trig,
             'breakout':sum(a.values()),'pullback':sum(b.values()),
             'candle':sum(c.values()),'smc':sum(d.values())}
+
+
+# ═══════════════════════════════════════
+# 第五批: 多指标共振 (E1~E10)
+# 每组至少3个独立指标同时指向同一方向才触发
+# ═══════════════════════════════════════
+
+def signal_bb_rsi_adx(close, high, low, direction, rsi=None, adx=None):
+    """E1: BB+RSI+ADX三指标共振
+    FMZ: BB-RSI-ADX-Entry-Points
+    做多: close<BB下轨+RSI<40+ADX>20"""
+    n = len(close)
+    if n < 20: return 0
+    sma = np.mean(close[-20:]); std = np.std(close[-20:])
+    lower = sma - 2*std; upper = sma + 2*std
+    rsi_v = float(rsi[-1]) if rsi is not None else 50
+    adx_v = adx if adx is not None else 20
+    if direction == 'long':
+        bb = close[-1] < lower; rs = rsi_v < 40; ad = adx_v > 20
+        return 1 if bb and rs and ad else 0
+    else:
+        bb = close[-1] > upper; rs = rsi_v > 60; ad = adx_v > 20
+        return 1 if bb and rs and ad else 0
+
+
+def signal_ema_macd_supertrend(close, high, low, direction):
+    """E2: EMA金叉+MACD>0+价格在SuperTrend上方
+    FMZ: EMA-MACD-SuperTrend-Combo"""
+    n = len(close)
+    if n < 30: return 0
+    ema12 = np.mean(close[-12:]); ema26 = np.mean(close[-26:])
+    macd = ema12 - ema26
+    prev12 = np.mean(close[-13:-1]); prev26 = np.mean(close[-27:-1])
+    prev_macd = prev12 - prev26
+    st = (high[-1]+low[-1])/2
+    if direction == 'long':
+        return 1 if ema12>ema26 and macd>prev_macd and close[-1]>st else 0
+    return 1 if ema12<ema26 and macd<prev_macd and close[-1]<st else 0
+
+
+def signal_rsi_stoch_kc(close, high, low, direction, rsi=None):
+    """E3: RSI+Stoch+KC三振荡器
+    FMZ: CCI-RSI-KC-Trend-Filter"""
+    n = len(close)
+    if n < 20: return 0
+    # Stoch %K simple
+    hh14 = np.max(high[-14:]); ll14 = np.min(low[-14:])
+    stoch = (close[-1]-ll14)/(hh14-ll14)*100 if hh14>ll14 else 50
+    # KC position
+    ema20 = np.mean(close[-20:])
+    tr = np.maximum(high[-14:]-low[-14:], np.abs(high[-14:]-np.roll(close[-14:],1)))
+    atr = np.mean(tr)
+    rsi_v = float(rsi[-1]) if rsi is not None else 50
+    if direction == 'long':
+        return 1 if rsi_v<40 and stoch<30 and close[-1]<(ema20-atr*1.5) else 0
+    return 1 if rsi_v>60 and stoch>70 and close[-1]>(ema20+atr*1.5) else 0
+
+
+def signal_adx_rsi_sma(close, direction, rsi=None, adx=None):
+    """E4: ADX+RSI+SMA趋势确认
+    FMZ: ADXRSISMA-Multi-Indicator"""
+    sma20 = np.mean(close[-20:]); sma50 = np.mean(close[-50:]) if len(close)>=50 else sma20
+    rsi_v = float(rsi[-1]) if rsi is not None else 50
+    adx_v = adx if adx is not None else 20
+    if direction == 'long':
+        return 1 if sma20>sma50 and rsi_v>50 and adx_v>25 else 0
+    return 1 if sma20<sma50 and rsi_v<50 and adx_v>25 else 0
+
+
+def signal_ema_rsi_ta(close, direction, rsi=None):
+    """E5: EMA交叉+RSI+价格趋势
+    FMZ: EMA-RSI-TA-Multi-Indicator"""
+    n = len(close)
+    if n < 20: return 0
+    ema9 = np.mean(close[-9:]); ema21 = np.mean(close[-21:]) if n>=21 else ema9
+    rsi_v = float(rsi[-1]) if rsi is not None else 50
+    if direction == 'long':
+        return 1 if ema9>ema21 and rsi_v>50 and close[-1]>ema9 else 0
+    return 1 if ema9<ema21 and rsi_v<50 and close[-1]<ema9 else 0
+
+
+def signal_ma_macd_bb(close, direction):
+    """E6: MA金叉+MACD+BB中轨突破
+    FMZ: MA-MACD-BB-Combo"""
+    n = len(close)
+    if n < 26: return 0
+    ma10 = np.mean(close[-10:]); ma20 = np.mean(close[-20:])
+    ema12 = np.mean(close[-12:]); ema26 = np.mean(close[-26:])
+    bb_mid = np.mean(close[-20:])
+    if direction == 'long':
+        return 1 if ma10>ma20 and ema12>ema26 and close[-1]>bb_mid else 0
+    return 1 if ma10<ma20 and ema12<ema26 and close[-1]<bb_mid else 0
+
+
+def signal_supertrend_adx_atr(high, low, close, direction, adx=None):
+    """E7: SuperTrend+ADX+ATR
+    FMZ: SuperTrend-ADX-ATR-Combo"""
+    n = len(close)
+    if n < 14: return 0
+    atr = np.mean(np.maximum(high[-14:]-low[-14:], np.abs(high[-14:]-np.roll(close[-14:],1))))
+    st_upper = (high[-1]+low[-1])/2 + 2*atr
+    st_lower = (high[-1]+low[-1])/2 - 2*atr
+    adx_v = adx if adx is not None else 20
+    if direction == 'long':
+        return 1 if close[-1]>st_upper and adx_v>25 else 0
+    return 1 if close[-1]<st_lower and adx_v>25 else 0
+
+
+def signal_cci_dmi_macd(high, low, close, direction):
+    """E8: CCI+DMI+MACD三重方向
+    FMZ: CCI-DMI-MACD-Hybrid"""
+    n = len(close)
+    if n < 26: return 0
+    tp = (high[-1]+low[-1]+close[-1])/3
+    tp_hist = np.array([(high[i]+low[i]+close[i])/3 for i in range(-20, 0)])
+    cci = (tp - np.mean(tp_hist)) / (0.015 * np.mean(np.abs(tp_hist-np.mean(tp_hist)))) if np.mean(np.abs(tp_hist-np.mean(tp_hist)))>0 else 0
+    ema12 = np.mean(close[-12:]); ema26 = np.mean(close[-26:])
+    if direction == 'long':
+        return 1 if cci>100 and ema12>ema26 and high[-1]>high[-2] else 0
+    return 1 if cci<-100 and ema12<ema26 and low[-1]<low[-2] else 0
+
+
+def signal_confluence_3plus(high, low, close, open_p, volume, direction):
+    """E9: 任意3+指标同时指向同一方向
+    FMZ: Kuberan-Confluence-Approach
+    统计A+B+C+D四批共40个信号, 取同一方向触发数>=5"""
+    # 快速聚合前4批中不需要rsl/adx外部参数的核心信号
+    count = 0
+    count += signal_donchian(high, low, close, direction)
+    count += signal_orb(high, low, close, direction)
+    count += signal_atr_breakout(high, low, close, direction)
+    count += signal_fractal(high, low, close, direction)
+    count += signal_ema_pullback(close, direction)
+    count += signal_bb_mean_revert(close, direction)
+    count += signal_ma_zone(close, direction)
+    count += signal_dual_ma_retrace(close, direction)
+    count += signal_engulf_atr(open_p, high, low, close, direction)
+    count += signal_bos(high, low, close, direction)
+    return 1 if count >= 5 else 0
+
+
+def signal_trend_align_3tf(high, low, close, direction):
+    """E10: 三重趋势对齐 — MA短中长排列
+    FMZ: Multi-Indicator-Combo-Trend
+    做多: MA10>MA20>MA50 全部多头"""
+    n = len(close)
+    if n < 50: return 0
+    ma10 = np.mean(close[-10:]); ma20 = np.mean(close[-20:]); ma50 = np.mean(close[-50:])
+    if direction == 'long':
+        return 1 if ma10 > ma20 > ma50 else 0
+    return 1 if ma10 < ma20 < ma50 else 0
+
+
+# ═══════════════════════════════════════
+# 综合评分 v5 (50信号 A+B+C+D+E, 0-50分)
+# ═══════════════════════════════════════
+
+def score_entry_signals_v5(high, low, close, volume, open_p, direction,
+                           bb_lower=None, bb_upper=None, rsi=None, adx=None,
+                           htf_direction=None):
+    """50个信号综合评分, 总分0-50: >=30强/15-29弱/<15无"""
+    a={
+        'A1_通道突破': signal_donchian(high,low,close,direction),
+        'A2_ORB区间':  signal_orb(high,low,close,direction),
+        'A3_BB极端':   signal_bb_extreme(close,direction,bb_lower,bb_upper,rsi),
+        'A4_ATR突破':  signal_atr_breakout(high,low,close,direction),
+        'A5_首K通道':  signal_first_bar_channel(high,low,close,direction),
+        'A6_历史极值': signal_extreme_high(high,low,close,volume,direction),
+        'A7_分形突破': signal_fractal(high,low,close,direction),
+        'A8_三重递增': signal_triple_high(high,low,close,volume,direction),
+        'A9_动量突破': signal_momentum_breakout(high,low,close,direction),
+        'A10_KC动量':  signal_kc_momentum(high,low,close,direction),
+    }; b={
+        'B1_Fib回撤':  signal_fib_retrace(high,low,close,direction),
+        'B2_EMA回踩':  signal_ema_pullback(close,direction),
+        'B3_BB回归':   signal_bb_mean_revert(close,direction),
+        'B4_KC回撤':   signal_kc_pullback(high,low,close,direction),
+        'B5_RSI深回撤': signal_rsi_fib_deep(close,direction,rsi),
+        'B6_MA区间':   signal_ma_zone(close,direction),
+        'B7_Donchian底': signal_donchian_pullback(high,low,close,direction),
+        'B8_MACD反转': signal_macd_volume_reversal(close,volume,direction),
+        'B9_BB弹跳':   signal_bb_ema9_bounce(close,direction),
+        'B10_双MA回撤': signal_dual_ma_retrace(close,direction),
+    }; c={
+        'C1_吞没确认': signal_engulf_confirm(open_p,high,low,close,direction),
+        'C2_吞没ATR':  signal_engulf_atr(open_p,high,low,close,direction),
+        'C3_吞没比例': signal_engulf_ratio(open_p,close,direction),
+        'C4_锤子':     signal_hammer(open_p,high,low,close,direction),
+        'C5_十字星':   signal_doji(open_p,high,low,close,direction),
+        'C6_三兵':     signal_three_soldiers(open_p,close,direction),
+        'C7_刺穿线':   signal_piercing_dark(open_p,close,direction),
+        'C8_孕线':     signal_harami(open_p,close,direction),
+        'C9_Fib蜡烛':  signal_candle_at_fib(open_p,high,low,close,direction),
+        'C10_量蜡烛':  signal_volume_candle(open_p,close,volume,direction),
+    }; d={
+        'D1_FVG缺口':    signal_fvg(high,low,close,direction),
+        'D2_订单块OB':   signal_order_block(open_p,high,low,close,direction),
+        'D3_BOS结构':    signal_bos(high,low,close,direction),
+        'D4_FVG量确认':  signal_fvg_volume(high,low,close,volume,direction),
+        'D5_流动性扫荡': signal_liquidity_sweep(high,low,close,direction),
+        'D6_结构一致':   signal_structure_confirm(high,low,close,direction,htf_direction),
+        'D7_FVG_ATR':   signal_fvg_atr(high,low,close,direction),
+        'D8_FVG_MA':    signal_fvg_ma(high,low,close,direction),
+        'D9_FVG深度':    signal_fvg_deep(high,low,close,direction),
+        'D10_OB_MACD':  signal_ob_macd(open_p,high,low,close,direction),
+    }; e={
+        'E1_BB_RSI_ADX':    signal_bb_rsi_adx(close,high,low,direction,rsi,adx),
+        'E2_EMA_MACD_ST':   signal_ema_macd_supertrend(close,high,low,direction),
+        'E3_RSI_Stoch_KC':  signal_rsi_stoch_kc(close,high,low,direction,rsi),
+        'E4_ADX_RSI_SMA':   signal_adx_rsi_sma(close,direction,rsi,adx),
+        'E5_EMA_RSI_TA':    signal_ema_rsi_ta(close,direction,rsi),
+        'E6_MA_MACD_BB':    signal_ma_macd_bb(close,direction),
+        'E7_ST_ADX_ATR':    signal_supertrend_adx_atr(high,low,close,direction,adx),
+        'E8_CCI_DMI_MACD':  signal_cci_dmi_macd(high,low,close,direction),
+        'E9_3+指标共振':    signal_confluence_3plus(high,low,close,open_p,volume,direction),
+        'E10_三MA排列':     signal_trend_align_3tf(high,low,close,direction),
+    }
+    all_s={**a,**b,**c,**d,**e}
+    total=sum(all_s.values())
+    trig=[k for k,v in all_s.items() if v]
+    level='强' if total>=30 else ('弱' if total>=15 else '无')
+    return {'total':total,'level':level,'signals':all_s,'details':trig,
+            'breakout':sum(a.values()),'pullback':sum(b.values()),
+            'candle':sum(c.values()),'smc':sum(d.values()),'combo':sum(e.values())}
