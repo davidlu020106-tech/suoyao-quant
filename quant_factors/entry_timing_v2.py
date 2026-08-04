@@ -1893,3 +1893,140 @@ def score_entry_signals_v8(high, low, close, volume, open_p, direction,
             'candle':sum(c.values()),'smc':sum(d.values()),
             'combo':sum(e.values()),'divergence':sum(f.values()),
             'range':sum(g.values()),'bounce':sum(h.values())}
+
+
+# ═══════════════════════════════════════
+# 第九批: 波动率突变 (I1~I10)
+# ═══════════════════════════════════════
+
+def signal_bb_squeeze(close, direction):
+    """I1: BB Squeeze — BB带宽<历史25%分位后扩张
+    FMZ: BB-Keltner-Squeeze"""
+    n = len(close)
+    if n < 40: return 0
+    bw_now = np.std(close[-20:]) / np.mean(close[-20:])
+    bw_prev = np.std(close[-40:-20]) / np.mean(close[-40:-20])
+    bw_hist = np.array([np.std(close[i-20:i])/np.mean(close[i-20:i]) for i in range(20,n)])
+    if len(bw_hist) < 5: return 0
+    was_tight = bw_prev < np.percentile(bw_hist, 25)
+    expanding = bw_now > bw_prev * 1.3
+    if not was_tight or not expanding: return 0
+    return 1 if (direction=='long' and close[-1]>np.mean(close[-20:])) or (direction=='short' and close[-1]<np.mean(close[-20:])) else 0
+
+
+def signal_kc_squeeze(high, low, close, direction):
+    """I2: KC Squeeze — KC宽度缩小后扩张"""
+    n = len(close)
+    if n < 40: return 0
+    def _kw(h,l,c):
+        ema=np.mean(c[-20:])
+        tr=np.maximum(h[-20:]-l[-20:], np.abs(h[-20:]-np.roll(c[-20:],1)))
+        tr[0]=h[-20]-l[-20]
+        atr=np.mean(tr)
+        return 2*1.5*atr/ema if ema>0 else 1
+    w_now=_kw(high,low,close); w_prev=_kw(high[-20:],low[-20:],close[-20:])
+    if w_now > w_prev * 1.3:
+        return 1 if (direction=='long' and close[-1]>np.mean(close[-20:])) or (direction=='short' and close[-1]<np.mean(close[-20:])) else 0
+    return 0
+
+
+def signal_atr_spike(high, low, close, direction):
+    """I3: ATR跳升 — ATR突然涨到近期2倍"""
+    n = len(close)
+    if n < 20: return 0
+    tr_now = np.mean(np.maximum(high[-5:]-low[-5:], np.abs(high[-5:]-np.roll(close[-5:],1))))
+    tr_hist = np.mean(np.maximum(high[-20:-5]-low[-20:-5], np.abs(high[-20:-5]-np.roll(close[-20:-5],1))))
+    if tr_hist <= 0: return 0
+    if tr_now/tr_hist > 1.8:
+        return 1 if (direction=='long' and close[-1]>close[-2]) or (direction=='short' and close[-1]<close[-2]) else 0
+    return 0
+
+
+def signal_vol_breakout(high, low, close, volume, direction):
+    """I4: 波动率+成交量双爆"""
+    n = len(close)
+    if n < 20: return 0
+    tr_now = np.mean(np.maximum(high[-5:]-low[-5:], np.abs(high[-5:]-np.roll(close[-5:],1))))
+    tr_20 = np.mean(np.maximum(high[-20:]-low[-20:], np.abs(high[-20:]-np.roll(close[-20:],1))))
+    if tr_20 <= 0: return 0
+    vol_r = volume[-1]/np.mean(volume[-20:]) if np.mean(volume[-20:])>0 else 1
+    if tr_now>tr_20*1.5 and vol_r>1.5:
+        return 1 if (direction=='long' and close[-1]>close[-2]) or (direction=='short' and close[-1]<close[-2]) else 0
+    return 0
+
+
+def signal_squeeze_momentum(close, direction):
+    """I5: Squeeze动量 — TTM Squeeze启动"""
+    n = len(close)
+    if n < 20: return 0
+    bb_w = np.std(close[-20:])
+    kc_w = np.mean(np.abs(np.diff(close[-20:])))
+    if kc_w <= 0: return 0
+    if bb_w < kc_w * 0.8:
+        mom = close[-1]-close[-5]
+        return 1 if (direction=='long' and mom>0) or (direction=='short' and mom<0) else 0
+    return 0
+
+
+def signal_dual_squeeze(high, low, close, direction):
+    """I6: 双Squeeze — BB+KC同时收缩"""
+    n = len(close)
+    if n < 40: return 0
+    bb_w = np.std(close[-20:])/np.mean(close[-20:])
+    bb_w_p = np.std(close[-40:-20])/np.mean(close[-40:-20])
+    def _kw(h,l,c):
+        ema=np.mean(c[-20:]); tr=np.maximum(h[-20:]-l[-20:],np.abs(h[-20:]-np.roll(c[-20:],1)))
+        tr[0]=h[-20]-l[-20]; atr=np.mean(tr)
+        return 2*1.5*atr/ema if ema>0 else 1
+    k_w=_kw(high,low,close); k_w_p=_kw(high[-20:],low[-20:],close[-20:])
+    if bb_w<bb_w_p*0.8 and k_w<k_w_p*0.8:
+        return 1 if (direction=='long' and close[-1]>close[-2]) or (direction=='short' and close[-1]<close[-2]) else 0
+    return 0
+
+
+def signal_adaptive_vol(high, low, close, direction):
+    """I7: 自适应波动率突破"""
+    n = len(close)
+    if n < 30: return 0
+    atr5 = np.mean(np.maximum(high[-5:]-low[-5:], np.abs(high[-5:]-np.roll(close[-5:],1))))
+    atr20 = np.mean(np.maximum(high[-20:]-low[-20:], np.abs(high[-20:]-np.roll(close[-20:],1))))
+    if atr20 <= 0: return 0
+    if atr5/atr20 > 1.5:
+        return 1 if (direction=='long' and close[-1]>np.mean(high[-10:])) or (direction=='short' and close[-1]<np.mean(low[-10:])) else 0
+    return 0
+
+
+def signal_zerolag_vol(high, low, close, direction):
+    """I8: 零滞后波动突破"""
+    n = len(close)
+    if n < 20: return 0
+    tr1 = np.mean(np.maximum(high[-3:]-low[-3:], np.abs(high[-3:]-np.roll(close[-3:],1))))
+    tr2 = np.mean(np.maximum(high[-10:-3]-low[-10:-3], np.abs(high[-10:-3]-np.roll(close[-10:-3],1))))
+    if tr2 <= 0: return 0
+    if tr1/tr2 > 2.0:
+        return 1 if (direction=='long' and close[-1]>close[-2]) or (direction=='short' and close[-1]<close[-2]) else 0
+    return 0
+
+
+def signal_vol_reversal(close, direction):
+    """I9: 波动率反转 — 高波后缩量"""
+    n = len(close)
+    if n < 20: return 0
+    vol_hist = np.array([np.std(close[i-5:i]) for i in range(5,n)])
+    if len(vol_hist) < 10: return 0
+    if vol_hist[-5] > np.percentile(vol_hist, 80) and vol_hist[-1] < vol_hist[-5]*0.5:
+        return 1 if (direction=='long' and close[-1]>close[-2]) or (direction=='short' and close[-1]<close[-2]) else 0
+    return 0
+
+
+def signal_momentum_squeeze_break(close, direction):
+    """I10: 动量挤压突破 — CT-TTM-Squeeze"""
+    n = len(close)
+    if n < 30: return 0
+    bb_w = np.std(close[-20:])
+    bb_w_avg = np.mean([np.std(close[i-20:i]) for i in range(20,n)])
+    if bb_w < bb_w_avg * 0.7:
+        ma = np.mean(close[-20:])
+        return 1 if (direction=='long' and close[-1]>ma and close[-1]>close[-2]) or (direction=='short' and close[-1]<ma and close[-1]<close[-2]) else 0
+    return 0
+
