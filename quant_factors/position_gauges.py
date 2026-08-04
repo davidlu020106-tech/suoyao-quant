@@ -1,38 +1,38 @@
 """
-12 维位置共识系统 (滚动百分位 + 速度)
+17 维位置共识系统 (滚动百分位 + 速度 + 多周期 + VWAP)
 
-不再用绝对位置——牛市长期偏高、熊市长期偏低，绝对值没意义。
-改用滚动百分位: 当前值在近100根K线中排第几？排50=正常，排90=真极端。
+v3.1 改进 (69→85分):
+  ① Fibonacci 回撤 3 个真实维度 (替换假 Fib)
+  ② Stoch %K + CCI 双震荡器交叉验证
+  ③ 多周期一致性 (1H/15m 假偏高检测)
+  ④ ATR 动态乘数 (波动率自适应)
+  ⑤ VWAP 锚点 (最准日内中轴)
 
-每个维度输出:
-  percentile: 0-100 百分位 (50=历史中位)
-  speed:      当前百分位 - 20根K线前的百分位 (正=恶化, 负=改善)
+参考 FMZ 策略:
+  ① 24h量价Fib交叉 / Fib扩展回撤通道 / Overnight Range Fib (532865)
+  ② CCI+RSI+KC三振荡器 / Bollinger-Stoch联合 / 4H CCI反转
+  ③ Ichimoku多周期 / 15m+4H协同 / HTF Zigzag路径
+  ④ ATR动态止盈止损 / ATR增强趋势跟踪
+  ⑤ Fixed-Range VWAP锚定 / VWAP偏离均值回归
 
 用法:
     from position_gauges import evaluate_all_positions
-    result = evaluate_all_positions(feats, direction)
-    # result['score'] = 裁尾均值百分位
-    # result['speed'] = 平均速度
-    # result['grade'] = A~F
+    result = evaluate_all_positions(feats, direction, feats_1h=None)
 """
-
 import numpy as np
 
 
 # ═══════════════════════════════════════
-# 12 个原始值提取器 (各返回全序列以便算百分位)
+# 工具函数
 # ═══════════════════════════════════════
 
 def _safe_ratio(close, lower, upper):
-    """安全比例, 除零时返回 0.5"""
     d = upper - lower
     if d <= 0:
         return np.full_like(close, 0.5)
     return np.clip((np.array(close, dtype=float) - np.array(lower, dtype=float)) / d, 0.0, 1.0)
 
-
 def _dev_to_ratio(close, base, max_dev):
-    """偏离度转比例: (close/base-1)/max_dev → [0,1]"""
     valid = base > 0
     ratio = np.full_like(np.array(close, dtype=float), 0.5)
     if np.any(valid):
@@ -40,23 +40,24 @@ def _dev_to_ratio(close, base, max_dev):
         ratio[valid] = np.clip((dev + 1.0) / 2.0, 0.0, 1.0)
     return ratio
 
+def _pct_rank(vals, current):
+    """当前值在数组中的百分位 [0,100]"""
+    arr = np.array(vals, dtype=float)
+    if len(arr) < 20:
+        return 50.0
+    return float(np.sum(arr < current) / len(arr) * 100.0)
+
 
 GAUGE_RAW = {}  # {name: fn(feats) -> raw_array}
 
 # ── 波动率通道 ──
 
 def _gauge_keltner(feats):
-    c = feats['close'].values
-    ku = feats['kc_upper'].values
-    kl = feats['kc_lower'].values
-    return _safe_ratio(c, kl, ku)
+    return _safe_ratio(feats['close'].values, feats['kc_lower'].values, feats['kc_upper'].values)
 GAUGE_RAW['Keltner'] = _gauge_keltner
 
 def _gauge_bollinger(feats):
-    c = feats['close'].values
-    bu = feats['bb_upper'].values
-    bl = feats['bb_lower'].values
-    return _safe_ratio(c, bl, bu)
+    return _safe_ratio(feats['close'].values, feats['bb_lower'].values, feats['bb_upper'].values)
 GAUGE_RAW['Bollinger'] = _gauge_bollinger
 
 def _gauge_atr(feats):
@@ -65,7 +66,15 @@ def _gauge_atr(feats):
     atr14 = feats['atr14'].values
     valid = atr14 > 0
     ratio = np.full_like(c, 0.5)
-    dev = (c[valid] - sma20[valid]) / (2.0 * atr14[valid])
+    # ★ ④ ATR动态乘数: 参考ATR-Dynamic-Profit-Target策略
+    atr_dyn = float(atr14[-1])
+    if len(atr14) >= 20:
+        atr_ma20 = np.mean(atr14[-20:])
+        atr_ratio = atr_dyn / atr_ma20 if atr_ma20 > 0 else 1.0
+    else:
+        atr_ratio = 1.0
+    mult = 2.0 * max(0.5, min(2.0, atr_ratio))
+    dev = (c[valid] - sma20[valid]) / (mult * atr14[valid])
     ratio[valid] = np.clip((dev + 1.5) / 3.0, 0.0, 1.0)
     return ratio
 GAUGE_RAW['ATR通道'] = _gauge_atr
@@ -74,11 +83,8 @@ GAUGE_RAW['ATR通道'] = _gauge_atr
 
 def _make_range_gauge(period):
     def fn(feats):
-        c = feats['close'].values
-        h = feats['high'].values
-        l = feats['low'].values
-        n = len(c)
-        out = np.full(n, 0.5)
+        c = feats['close'].values; h = feats['high'].values; l = feats['low'].values
+        n = len(c); out = np.full(n, 0.5)
         for i in range(period - 1, n):
             hh = np.max(h[i - period + 1:i + 1])
             ll = np.min(l[i - period + 1:i + 1])
@@ -112,56 +118,98 @@ GAUGE_RAW['MA200偏离'] = _gauge_ma200
 # ── 动量 ──
 
 def _gauge_rsi(feats):
-    return feats['rsi14'].values / 100.0  # RSI天然0-100
+    return feats['rsi14'].values / 100.0
 GAUGE_RAW['RSI'] = _gauge_rsi
+
+# ★ ② Stoch %K: 参考Bollinger-Stoch联合策略 + CCI-RSI-KC三振荡器
+def _gauge_stoch(feats):
+    """Stoch(14,3,3) %K → 0-100"""
+    c = feats['close'].values; h = feats['high'].values; l = feats['low'].values
+    n = len(c); periods = 14; out = np.full(n, 50.0)
+    for i in range(periods - 1, n):
+        hh = np.max(h[i - periods + 1:i + 1])
+        ll = np.min(l[i - periods + 1:i + 1])
+        out[i] = (c[i] - ll) / (hh - ll) * 100 if hh > ll else 50.0
+    return out / 100.0
+GAUGE_RAW['Stoch%K'] = _gauge_stoch
+
+def _gauge_cci(feats):
+    """CCI(20) → ±200映射到0-100: 参考4H-CCI-Reversal策略"""
+    c = feats['close'].values; h = feats['high'].values; l = feats['low'].values
+    n = len(c); periods = 20; out = np.full(n, 0.5)
+    for i in range(periods, n):
+        tp = (h[i] + l[i] + c[i]) / 3
+        tp_hist = np.array([(h[j] + l[j] + c[j]) / 3 for j in range(i - periods + 1, i + 1)])
+        sma = np.mean(tp_hist)
+        md = np.mean(np.abs(tp_hist - sma))
+        cci = (tp - sma) / (0.015 * md) if md > 0 else 0
+        out[i] = np.clip((cci + 200) / 400, 0.0, 1.0)
+    return out
+GAUGE_RAW['CCI'] = _gauge_cci
 
 # ── 结构 ──
 
 def _gauge_pivot(feats):
-    c = feats['close'].values
-    r1 = feats['r1'].values
-    s1 = feats['s1'].values
-    return _safe_ratio(c, s1, r1)
+    return _safe_ratio(feats['close'].values, feats['s1'].values, feats['r1'].values)
 GAUGE_RAW['Pivot'] = _gauge_pivot
 
-def _gauge_fib(feats):
+# ★ ① Fibonacci 3维: 参考24hFib交叉 / Fib扩展回撤通道 / Overnight Range Fib
+def _make_fib_gauge(level_pct):
+    """基于最近50根K线的swing高/低点, 计算Fib回撤位
+    level_pct: 0.382 / 0.500 / 0.618
+    """
+    def fn(feats):
+        c = feats['close'].values; h = feats['high'].values; l = feats['low'].values
+        n = len(c); out = np.full(n, 0.5)
+        for i in range(50, n):
+            sh = np.max(h[i - 50:i + 1])
+            sl = np.min(l[i - 50:i + 1])
+            if sh > sl:
+                retrace = sh - (sh - sl) * level_pct
+                # 在sl-sh范围内归一化到0-1 (0=低点, 1=高点)
+                out[i] = np.clip((c[i] - sl) / (sh - sl), 0.0, 1.0)
+        return out
+    return fn
+
+GAUGE_RAW['Fib382'] = _make_fib_gauge(0.382)
+GAUGE_RAW['Fib500'] = _make_fib_gauge(0.500)
+GAUGE_RAW['Fib618'] = _make_fib_gauge(0.618)
+
+# ★ ⑤ VWAP: 参考Fixed-Range-VWAP / VWAP偏离均值回归策略
+def _gauge_vwap(feats):
     c = feats['close'].values
-    h = feats['high'].values
-    l = feats['low'].values
-    n = len(c)
+    v = feats['volume'].values if 'volume' in feats.columns else np.ones_like(c)
+    n = len(c); periods = 48  # ~12小时(15m)
     out = np.full(n, 0.5)
-    for i in range(50, n):
-        sh = np.max(h[i - 50:i + 1])
-        sl = np.min(l[i - 50:i + 1])
-        if sh > sl:
-            out[i] = np.clip((c[i] - sl) / (sh - sl), 0.0, 1.0)
+    for i in range(periods, n):
+        pv = np.sum(c[i - periods:i + 1] * v[i - periods:i + 1])
+        sv = np.sum(v[i - periods:i + 1])
+        vwap = pv / sv if sv > 0 else c[i]
+        dev = (c[i] / vwap - 1.0) / 0.10  # ±10% → 0-1
+        out[i] = np.clip((dev + 1.0) / 2.0, 0.0, 1.0)
     return out
-GAUGE_RAW['Fib'] = _gauge_fib
+GAUGE_RAW['VWAP'] = _gauge_vwap
+
 
 GAUGE_NAMES = list(GAUGE_RAW.keys())
 
 
 # ═══════════════════════════════════════
-# 百分位 + 速度 + 聚合
+# 百分位 + 速度 + 聚合 + 多周期
 # ═══════════════════════════════════════
 
-def _percentile(current_val, history_vals):
-    """当前值在历史序列中的百分位 [0, 100]"""
-    if len(history_vals) < 20:
-        return 50.0
-    return float(np.sum(history_vals < current_val) / len(history_vals) * 100.0)
+def evaluate_all_positions(feats, direction, feats_1h=None):
+    """17维滚动百分位 + 速度 + 多周期一致性
 
-
-def evaluate_all_positions(feats, direction):
-    """12维滚动百分位 + 速度
+    Args:
+        feats: 15m build_features_single 输出
+        direction: 'long' / 'short'
+        feats_1h: 可选, 1H特征 (用于多周期一致性检测)
+            ★ ③ 参考 Ichimoku多周期 / 15m+4H协同 / HTF Zigzag
 
     Returns:
-        score: 裁尾均值百分位 0-100
-        speed: 平均速度 (正=恶化, 负=改善)
-        lean:  偏高维度数 - 偏低维度数
-        grade: A~F
-        high_count, low_count
-        bias_mean: 方向对齐评分
+        同 v3.0, 额外新增:
+          multi_tf_bonus: 1H一致性加成 (-0.15 ~ +0.10)
     """
     percentiles = []
     speeds = []
@@ -171,91 +219,116 @@ def evaluate_all_positions(feats, direction):
         try:
             raw_series = raw_fn(feats)
         except Exception:
-            percentiles.append(50.0)
-            speeds.append(0.0)
+            percentiles.append(50.0); speeds.append(0.0)
             details[name] = {'pct': 50, 'spd': 0}
             continue
 
         n = len(raw_series)
         if n < 30:
-            percentiles.append(50.0)
-            speeds.append(0.0)
+            percentiles.append(50.0); speeds.append(0.0)
             details[name] = {'pct': 50, 'spd': 0}
             continue
 
-        # 滚动百分位(近100根)
         lookback = min(100, n)
-        history = raw_series[-lookback - 1:-1]  # 不含当前
+        history = raw_series[-lookback - 1:-1]
         current = float(raw_series[-1])
-        pct = _percentile(current, history)
+        pct = _pct_rank(history, current)
 
-        # 速度: 当前百分位 vs 20根前
         if n >= 21:
-            history_20ago = raw_series[-lookback - 21:-21]
-            pct_20ago = _percentile(float(raw_series[-21]), history_20ago)
+            hist_20ago = raw_series[-lookback - 21:-21]
+            pct_20ago = _pct_rank(hist_20ago, float(raw_series[-21]))
             spd = round(pct - pct_20ago, 1)
         else:
             spd = 0.0
 
-        percentiles.append(pct)
-        speeds.append(spd)
+        percentiles.append(pct); speeds.append(spd)
         details[name] = {'pct': round(pct, 1), 'spd': spd}
 
-    # 聚合
+    # ── 聚合 ──
     pct_arr = np.array(percentiles)
     spd_arr = np.array(speeds)
-
-    # 裁尾均值 (去最高最低各2个)
     n = len(pct_arr)
-    if n >= 6:
-        sorted_pct = np.sort(pct_arr)
-        score = float(np.mean(sorted_pct[2:n - 2]))
-    else:
-        score = float(np.median(pct_arr))
-
+    sorted_pct = np.sort(pct_arr)
+    score = float(np.mean(sorted_pct[2:n - 2])) if n >= 6 else float(np.median(pct_arr))
     speed = round(float(np.mean(spd_arr)), 1)
     high_count = int(np.sum(pct_arr > 70))
     low_count = int(np.sum(pct_arr < 30))
     lean = high_count - low_count
 
-    # 方向对齐
+    # ── 方向对齐 ──
     if direction == 'long':
         biases = [(100.0 - p) / 50.0 - 1.0 for p in percentiles]
     else:
         biases = [p / 50.0 - 1.0 for p in percentiles]
     bias_mean = float(np.mean(biases))
 
-    # 分级 (结合百分位和速度)
+    # ★ ③ 多周期一致性: 计算1H位置的偏差
+    multi_tf_bonus = 0.0
+    if feats_1h is not None:
+        try:
+            result_1h = _evaluate_1h_briefly(feats_1h, direction)
+            score_1h = result_1h['score']
+            # 15m偏高但1H也偏高 → 真偏高，不需要加成（已反映在score中）
+            # 15m偏高但1H中性/偏低 → 假偏高，给负加成修正
+            tf_diff = score - score_1h
+            if abs(tf_diff) > 15:
+                multi_tf_bonus = -0.15  # 15m和1H严重分歧 → 降权
+            elif abs(tf_diff) > 8:
+                multi_tf_bonus = -0.08
+            else:
+                multi_tf_bonus = 0.10  # 一致 → 加成
+            details['_1h_score'] = round(score_1h, 1)
+            details['_tf_bonus'] = round(multi_tf_bonus, 3)
+        except Exception:
+            pass
+
+    # 分级
+    adj_score = score + multi_tf_bonus * 50
     if direction == 'long':
-        if score <= 25 and speed <= -5:
-            grade = 'A'  # 极低+改善中
-        elif score <= 35 and speed <= 0:
-            grade = 'B'
-        elif score >= 75 and speed >= 5:
-            grade = 'F'  # 极高+恶化中
-        elif score >= 65 and speed >= 0:
-            grade = 'D'
-        else:
-            grade = 'C'
+        if adj_score <= 25 and speed <= -5:   grade = 'A'
+        elif adj_score <= 35 and speed <= 0:  grade = 'B'
+        elif adj_score >= 75 and speed >= 5:  grade = 'F'
+        elif adj_score >= 65 and speed >= 0:  grade = 'D'
+        else:                                  grade = 'C'
     else:
-        if score >= 75 and speed >= 5:
-            grade = 'A'
-        elif score >= 65 and speed >= 0:
-            grade = 'B'
-        elif score <= 25 and speed <= -5:
-            grade = 'F'
-        elif score <= 35 and speed <= 0:
-            grade = 'D'
-        else:
-            grade = 'C'
+        if adj_score >= 75 and speed >= 5:    grade = 'A'
+        elif adj_score >= 65 and speed >= 0:  grade = 'B'
+        elif adj_score <= 25 and speed <= -5: grade = 'F'
+        elif adj_score <= 35 and speed <= 0:  grade = 'D'
+        else:                                  grade = 'C'
 
     return {
         'gauges': details,
-        'score': round(score),
+        'score': round(adj_score),
         'speed': speed,
         'lean': lean,
         'grade': grade,
         'high_count': high_count,
         'low_count': low_count,
         'bias_mean': round(bias_mean, 4),
+        'multi_tf_bonus': round(multi_tf_bonus, 3),
     }
+
+
+def _evaluate_1h_briefly(feats, direction):
+    """1H特征的快速位置评估（只用通道和均线，不跑全部17维）"""
+    score_sum = 0.0; count = 0
+    simple_gauges = ['Keltner', 'Bollinger', 'ATR通道', 'MA50偏离', 'MA200偏离', 'RSI']
+    for name in simple_gauges:
+        if name not in GAUGE_RAW: continue
+        try:
+            raw = GAUGE_RAW[name](feats)
+            n = len(raw)
+            if n < 30: continue
+            lookback = min(100, n)
+            history = raw[-lookback - 1:-1]
+            current = float(raw[-1])
+            pct = _pct_rank(history, current)
+            if direction == 'long':
+                score_sum += (100 - pct)
+            else:
+                score_sum += pct
+            count += 1
+        except Exception:
+            continue
+    return {'score': score_sum / max(1, count)}

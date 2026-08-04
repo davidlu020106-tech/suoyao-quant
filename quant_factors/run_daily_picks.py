@@ -296,6 +296,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     # ── MTF: 1H K线 (中期趋势仲裁, 新增) ──
     cdl_1h = fetch_ohlc(sym, '1H', 168)
     mtf_avg = 0.0; mtf_ln = mtf_sn = 0
+    feats_1h = None  # ★ 多周期位置一致性
     if len(cdl_1h) >= 20:
         df_1h = pd.DataFrame(cdl_1h)
         df_1h['date'] = pd.to_datetime(df_1h['date'])
@@ -399,11 +400,11 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     else:
         return None
 
-    # ★ 12维位置共识 (滚动百分位+速度)
+    # ★ 17维位置共识 (滚动百分位+速度+多周期)
     try:
         from position_gauges import evaluate_all_positions
-        pos_result = evaluate_all_positions(feats_15m, direction)
-        pos_score = pos_result['score']       # 裁尾均值百分位 0-100
+        pos_result = evaluate_all_positions(feats_15m, direction, feats_1h)
+        pos_score = pos_result['score']       # 裁尾均值百分位 0-100, 多周期修正后
         pos_speed = pos_result['speed']       # 速度 (正=恶化, 负=改善)
         pos_lean = pos_result['lean']         # 偏向
         pos_grade = pos_result['grade']       # A/B/C/D/F
