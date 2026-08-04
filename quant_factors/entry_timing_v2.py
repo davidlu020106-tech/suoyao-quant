@@ -1122,3 +1122,261 @@ def score_entry_signals_v5(high, low, close, volume, open_p, direction,
     return {'total':total,'level':level,'signals':all_s,'details':trig,
             'breakout':sum(a.values()),'pullback':sum(b.values()),
             'candle':sum(c.values()),'smc':sum(d.values()),'combo':sum(e.values())}
+
+
+# ═══════════════════════════════════════
+# 第六批: 背离信号 (F1~F10)
+# ═══════════════════════════════════════
+
+def signal_rsi_divergence(close, direction, rsi=None):
+    """F1: RSI常规背离 — 价格新高RSI不确认
+    FMZ: RSI-Divergence-Trading
+    看跌背离: 价格higher high + RSI lower high → 做空"""
+    n = len(close)
+    if n < 20: return 0
+    if rsi is None:
+        # 简单RSI
+        d = np.diff(close)
+        g = np.where(d>0,d,0); l = np.where(d<0,-d,0)
+        rsi_arr = np.full(len(close), 50.0)
+        for i in range(14,len(close)):
+            ag=np.mean(g[i-14:i]); al=np.mean(l[i-14:i])
+            rsi_arr[i]=100-100/(1+ag/al) if al>0 else 100
+        rsi = rsi_arr
+    if direction == 'long':
+        # 看涨背离: 价格lower low + RSI higher low
+        for i in range(n-5, n-15, -1):
+            if close[-1] < close[i] and rsi[-1] > rsi[i]:
+                return 1
+    else:
+        for i in range(n-5, n-15, -1):
+            if close[-1] > close[i] and rsi[-1] < rsi[i]:
+                return 1
+    return 0
+
+
+def signal_hidden_divergence(close, direction, rsi=None):
+    """F2: RSI隐藏背离 — 趋势延续信号
+    FMZ: RSI-Hidden-Divergence
+    看涨隐藏: 价格higher low + RSI lower low → 做多(趋势延续)"""
+    n = len(close)
+    if n < 20: return 0
+    if rsi is None:
+        d=np.diff(close); g=np.where(d>0,d,0); l=np.where(d<0,-d,0)
+        rsi=np.full(len(close),50.0)
+        for i in range(14,len(close)):
+            ag=np.mean(g[i-14:i]); al=np.mean(l[i-14:i])
+            rsi[i]=100-100/(1+ag/al) if al>0 else 100
+    if direction == 'long':
+        for i in range(n-5, n-15, -1):
+            if close[-1] > close[i] and rsi[-1] < rsi[i]:
+                return 1
+    else:
+        for i in range(n-5, n-15, -1):
+            if close[-1] < close[i] and rsi[-1] > rsi[i]:
+                return 1
+    return 0
+
+
+def signal_macd_divergence(close, direction):
+    """F3: MACD背离
+    FMZ: MACD-Divergence-Reversal"""
+    n = len(close)
+    if n < 30: return 0
+    ema12 = np.mean(close[-12:]); ema26 = np.mean(close[-26:])
+    macd_now = ema12 - ema26
+    prev12 = np.mean(close[-17:-5]); prev26 = np.mean(close[-31:-5])
+    macd_prev = prev12 - prev26
+    if direction == 'long':
+        return 1 if close[-1] < close[-15] and macd_now > macd_prev else 0
+    return 1 if close[-1] > close[-15] and macd_now < macd_prev else 0
+
+
+def signal_cci_divergence(high, low, close, direction):
+    """F4: CCI背离
+    FMZ: CCI-Momentum-Divergence"""
+    n = len(close)
+    if n < 30: return 0
+    def calc_cci(idx):
+        tp_arr = np.array([(high[j]+low[j]+close[j])/3 for j in range(idx-20, idx)])
+        sma = np.mean(tp_arr); md = np.mean(np.abs(tp_arr-sma))
+        tp = (high[idx]+low[idx]+close[idx])/3
+        return (tp-sma)/(0.015*md) if md>0 else 0
+    cci_now = calc_cci(-1); cci_prev = calc_cci(-15)
+    if direction == 'long':
+        return 1 if close[-1] < close[-15] and cci_now > cci_prev else 0
+    return 1 if close[-1] > close[-15] and cci_now < cci_prev else 0
+
+
+def signal_obv_divergence(close, volume, direction):
+    """F5: OBV背离 — 量价背离
+    FMZ: OBV-MACD-Indicator"""
+    n = len(close)
+    if n < 20: return 0
+    obv = np.zeros(n); obv[0] = volume[0]
+    for i in range(1, n):
+        if close[i] > close[i-1]: obv[i] = obv[i-1] + volume[i]
+        elif close[i] < close[i-1]: obv[i] = obv[i-1] - volume[i]
+        else: obv[i] = obv[i-1]
+    if direction == 'long':
+        return 1 if close[-1] < close[-10] and obv[-1] > obv[-10] else 0
+    return 1 if close[-1] > close[-10] and obv[-1] < obv[-10] else 0
+
+
+def signal_price_divergence(close, direction):
+    """F6: 价格动量背离 — ROC背离
+    FMZ: Momentum-Divergence-Strategy"""
+    n = len(close)
+    if n < 20: return 0
+    roc_now = (close[-1]-close[-10])/close[-10]
+    roc_prev = (close[-10]-close[-20])/close[-20]
+    if direction == 'long':
+        return 1 if close[-1] < close[-10] and roc_now > roc_prev else 0
+    return 1 if close[-1] > close[-10] and roc_now < roc_prev else 0
+
+
+def signal_volume_divergence(close, volume, direction):
+    """F7: 量背离 — 价跌量增/价增量减
+    FMZ: Volume-Divergence-Detection"""
+    n = len(close)
+    if n < 10: return 0
+    vol_ma5 = np.mean(volume[-5:]); vol_ma10 = np.mean(volume[-10:])
+    if direction == 'long':
+        return 1 if close[-1] < close[-5] and vol_ma5 > vol_ma10*1.2 else 0
+    return 1 if close[-1] > close[-5] and vol_ma5 < vol_ma10*0.8 else 0
+
+
+def signal_ppo_divergence(close, direction):
+    """F8: PPO背离 — Percentage Price Oscillator
+    FMZ: PPO-Bull-Bear-Divergence"""
+    n = len(close)
+    if n < 30: return 0
+    ema12 = np.mean(close[-12:]); ema26 = np.mean(close[-26:])
+    ppo_now = (ema12-ema26)/ema26*100
+    prev12 = np.mean(close[-22:-10]); prev26 = np.mean(close[-36:-10])
+    ppo_prev = (prev12-prev26)/prev26*100 if prev26>0 else 0
+    if direction == 'long':
+        return 1 if close[-1] < close[-15] and ppo_now > ppo_prev else 0
+    return 1 if close[-1] > close[-15] and ppo_now < ppo_prev else 0
+
+
+def signal_double_divergence(close, direction, rsi=None):
+    """F9: 双背离 — RSI+MACD同时背离
+    FMZ: Dual-Divergence-Strategy"""
+    rsi_div = signal_rsi_divergence(close, direction, rsi)
+    macd_div = signal_macd_divergence(close, direction)
+    return 1 if rsi_div and macd_div else 0
+
+
+def signal_extreme_divergence(close, direction, rsi=None):
+    """F10: 极端背离 — RSI超买超卖+背离
+    FMZ: RSI-Extreme-Divergence"""
+    n = len(close)
+    if n < 20: return 0
+    if rsi is None:
+        d=np.diff(close); g=np.where(d>0,d,0); l=np.where(d<0,-d,0)
+        rsi=np.full(len(close),50.0)
+        for i in range(14,len(close)):
+            ag=np.mean(g[i-14:i]); al=np.mean(l[i-14:i])
+            rsi[i]=100-100/(1+ag/al) if al>0 else 100
+    rsi_div = signal_rsi_divergence(close, direction, rsi)
+    if not rsi_div: return 0
+    if direction == 'long':
+        return 1 if rsi[-1] < 30 else 0
+    return 1 if rsi[-1] > 70 else 0
+
+
+# ═══════════════════════════════════════
+# 综合评分 v6 (60信号 A+B+C+D+E+F, 0-60分)
+# ═══════════════════════════════════════
+
+def score_entry_signals_v6(high, low, close, volume, open_p, direction,
+                           bb_lower=None, bb_upper=None, rsi=None, adx=None,
+                           htf_direction=None):
+    """60个信号综合评分, 总分0-60: >=36强/18-35弱/<18无"""
+    
+    a={
+        'A1_通道突破': signal_donchian(high,low,close,direction),
+        'A2_ORB区间':  signal_orb(high,low,close,direction),
+        'A3_BB极端':   signal_bb_extreme(close,direction,bb_lower,bb_upper,rsi),
+        'A4_ATR突破':  signal_atr_breakout(high,low,close,direction),
+        'A5_首K通道':  signal_first_bar_channel(high,low,close,direction),
+        'A6_历史极值': signal_extreme_high(high,low,close,volume,direction),
+        'A7_分形突破': signal_fractal(high,low,close,direction),
+        'A8_三重递增': signal_triple_high(high,low,close,volume,direction),
+        'A9_动量突破': signal_momentum_breakout(high,low,close,direction),
+        'A10_KC动量':  signal_kc_momentum(high,low,close,direction),
+    }; b={
+        'B1_Fib回撤':  signal_fib_retrace(high,low,close,direction),
+        'B2_EMA回踩':  signal_ema_pullback(close,direction),
+        'B3_BB回归':   signal_bb_mean_revert(close,direction),
+        'B4_KC回撤':   signal_kc_pullback(high,low,close,direction),
+        'B5_RSI深回撤': signal_rsi_fib_deep(close,direction,rsi),
+        'B6_MA区间':   signal_ma_zone(close,direction),
+        'B7_Donchian底': signal_donchian_pullback(high,low,close,direction),
+        'B8_MACD反转': signal_macd_volume_reversal(close,volume,direction),
+        'B9_BB弹跳':   signal_bb_ema9_bounce(close,direction),
+        'B10_双MA回撤': signal_dual_ma_retrace(close,direction),
+    }; c={
+        'C1_吞没确认': signal_engulf_confirm(open_p,high,low,close,direction),
+        'C2_吞没ATR':  signal_engulf_atr(open_p,high,low,close,direction),
+        'C3_吞没比例': signal_engulf_ratio(open_p,close,direction),
+        'C4_锤子':     signal_hammer(open_p,high,low,close,direction),
+        'C5_十字星':   signal_doji(open_p,high,low,close,direction),
+        'C6_三兵':     signal_three_soldiers(open_p,close,direction),
+        'C7_刺穿线':   signal_piercing_dark(open_p,close,direction),
+        'C8_孕线':     signal_harami(open_p,close,direction),
+        'C9_Fib蜡烛':  signal_candle_at_fib(open_p,high,low,close,direction),
+        'C10_量蜡烛':  signal_volume_candle(open_p,close,volume,direction),
+    }; d={
+        'D1_FVG缺口':    signal_fvg(high,low,close,direction),
+        'D2_订单块OB':   signal_order_block(open_p,high,low,close,direction),
+        'D3_BOS结构':    signal_bos(high,low,close,direction),
+        'D4_FVG量确认':  signal_fvg_volume(high,low,close,volume,direction),
+        'D5_流动性扫荡': signal_liquidity_sweep(high,low,close,direction),
+        'D6_结构一致':   signal_structure_confirm(high,low,close,direction,htf_direction),
+        'D7_FVG_ATR':   signal_fvg_atr(high,low,close,direction),
+        'D8_FVG_MA':    signal_fvg_ma(high,low,close,direction),
+        'D9_FVG深度':    signal_fvg_deep(high,low,close,direction),
+        'D10_OB_MACD':  signal_ob_macd(open_p,high,low,close,direction),
+    }; e={
+        'E1_BB_RSI_ADX':    signal_bb_rsi_adx(close,high,low,direction,rsi,adx),
+        'E2_EMA_MACD_ST':   signal_ema_macd_supertrend(close,high,low,direction),
+        'E3_RSI_Stoch_KC':  signal_rsi_stoch_kc(close,high,low,direction,rsi),
+        'E4_ADX_RSI_SMA':   signal_adx_rsi_sma(close,direction,rsi,adx),
+        'E5_EMA_RSI_TA':    signal_ema_rsi_ta(close,direction,rsi),
+        'E6_MA_MACD_BB':    signal_ma_macd_bb(close,direction),
+        'E7_ST_ADX_ATR':    signal_supertrend_adx_atr(high,low,close,direction,adx),
+        'E8_CCI_DMI_MACD':  signal_cci_dmi_macd(high,low,close,direction),
+        'E9_3+指标共振':    signal_confluence_3plus(high,low,close,open_p,volume,direction),
+        'E10_三MA排列':     signal_trend_align_3tf(high,low,close,direction),
+    }    f={
+        'F1_RSI背离':   signal_rsi_divergence(close,direction,rsi),
+        'F2_隐藏背离':  signal_hidden_divergence(close,direction,rsi),
+        'F3_MACD背离':  signal_macd_divergence(close,direction),
+        'F4_CCI背离':   signal_cci_divergence(high,low,close,direction),
+        'F5_OBV背离':   signal_obv_divergence(close,volume,direction),
+        'F6_动量背离':  signal_price_divergence(close,direction),
+        'F7_量背离':    signal_volume_divergence(close,volume,direction),
+        'F8_PPO背离':   signal_ppo_divergence(close,direction),
+        'F9_双背离':    signal_double_divergence(close,direction,rsi),
+        'F10_极端背离': signal_extreme_divergence(close,direction,rsi),
+    }
+    all_s={**a,**b,**c,**d,**e,**f}
+    total=sum(all_s.values())
+    trig=[k for k,v in all_s.items() if v]
+    level='强' if total>=36 else ('弱' if total>=18 else '无')
+    return {'total':total,'level':level,'signals':all_s,'details':trig,
+            'breakout':sum(a.values()),'pullback':sum(b.values()),
+            'candle':sum(c.values()),'smc':sum(d.values()),
+            'combo':sum(e.values()),'divergence':sum(f.values())}
+
+    }
+    all_s={**a,**b,**c,**d,**e,**f}
+    total=sum(all_s.values())
+    trig=[k for k,v in all_s.items() if v]
+    level='强' if total>=36 else ('弱' if total>=18 else '无')
+    return {'total':total,'level':level,'signals':all_s,'details':trig,
+            'breakout':sum(a.values()),'pullback':sum(b.values()),
+            'candle':sum(c.values()),'smc':sum(d.values()),
+            'combo':sum(e.values()),'divergence':sum(f.values())}
