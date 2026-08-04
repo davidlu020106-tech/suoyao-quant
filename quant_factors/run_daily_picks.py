@@ -13,6 +13,11 @@
     python quant_factors/run_daily_picks.py --top 50 --min-r1 1.5
 """
 import sys, os, json, urllib.request, time
+# Windows GBK emoji 兼容
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
@@ -265,7 +270,7 @@ def kol_vote(latest_row, reg, rids, profs, fr, oi, factor_scores=None, kol_weigh
 # ═══════════════════════════════════════
 
 def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None, kol_weights=None):
-    """对一个币做三重时间框架分析(15m+1H+日线), 返回结果dict或None"""
+    """对一个币做三重时间框架分析(1H+4H+日线), 返回结果dict或None"""
     sym = f'{base}-USDT'
 
     # ── 15m K线 (仅用于入场信号，不参与KOL/ADX) ──
@@ -381,10 +386,10 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         alignment_grade = '日线+1H一致'
     elif htf_bias == ltf_bias != 'neutral':
         alignment = 0.6       # HTF+LTF一致 → 日线确认但1H分歧
-        alignment_grade = '日线+15m一致'
+        alignment_grade = '日线+1H一致'
     elif ltf_bias == mtf_bias != 'neutral':
         alignment = 0.3       # LTF+MTF一致但日线反 → 信心低
-        alignment_grade = '15m+1H(日线分歧)'
+        alignment_grade = '4H)日线分歧)'
     else:
         alignment = 0.0
         alignment_grade = '三向分歧'
@@ -634,8 +639,8 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             results.append(r)
             arrow = '✅' if r['consistent'] else '⚠️'
             align_tag = r.get('alignment_grade', '')[:6]
-            print(f'  [{i+1}/{len(coins_list)}] {base:<8s} 15m L/S={r["m5_long"]}/{r["m5_short"]:<2d} '
-                  f'1H L/S={r["mtf_long"]}/{r["mtf_short"]:<2d} '
+            print(f'  [{i+1}/{len(coins_list)}] {base:<8s} 1H L/S={r["m5_long"]}/{r["m5_short"]:<2d} '
+                  f'4H L/S={r["mtf_long"]}/{r["mtf_short"]:<2d} '
                   f'D L/S={r["daily_long"]}/{r["daily_short"]:<2d} '
                   f'ADX={r["adx"]:.0f} R1={r["r1_up"]:.1f}% Pft={r["tp1_profit"]:.0f}% '
                   f'{arrow} {align_tag}')
@@ -683,7 +688,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     # 排名：按三重对齐度+方向分组
     ranking_groups = []
     # 全一致最优 → MTF+HTF一致次之 → 两两一致 → 三向分歧垫底
-    for grade_order, grade_label in [(1.0, '三重一致'), (0.8, '日线+1H一致'), (0.6, '日线+15m一致'), (0.3, '15m+1H(日线分歧)'), (0.0, '三向分歧')]:
+    for grade_order, grade_label in [(1.0, '三重一致'), (0.8, '日线+1H一致'), (0.6, '日线+1H一致'), (0.3, '4H)日线分歧)'), (0.0, '三向分歧')]:
         group = [r for r in results if r.get('alignment', 0) == grade_order]
         if group:
             direction_order = {'long': 0, 'short': 1, 'neutral': 2}
@@ -709,7 +714,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
     print()
     hdr = (f'  {"序":>2s} {"币种":<6s} {"超级趋势":<6s} {"方向":>2s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
            f' {"RSI":>4s} {"入场价":>10s} {"止盈价":>10s} {"杠杆":>4s} {"TP1利润%":>8s}'
-           f' {"15mKOL":>7s} {"1HKOL":>5s} {"日KOL":>6s} {"对齐":>6s}')
+           f' {"1HKOL":>7s} {"4HKOL":>5s} {"日KOL":>6s} {"对齐":>6s}')
     print(hdr)
     print(f'  {dash2}')
     for i, r in enumerate(ranked, 1):
@@ -744,7 +749,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         print(f'  ── 做空推荐 ──')
         hdr = (f'  {"序":>2s} {"币种":<6s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
                f' {"RSI":>4s} {"入场价":>10s} {"止盈价":>10s} {"杠杆":>4s} {"TP1利润%":>8s}'
-               f' {"15mKOL":>7s} {"1HKOL":>5s} {"日KOL":>6s} {"对齐":>4s}')
+               f' {"1HKOL":>7s} {"4HKOL":>5s} {"日KOL":>6s} {"对齐":>4s}')
         print(hdr)
         print(f'  {dash2}')
         for i, r in enumerate(short_ok[:5], 1):
@@ -764,7 +769,7 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
         print(f'  ── 做多推荐 ──')
         hdr = (f'  {"序":>2s} {"币种":<6s} {"强度":>5s} {"方向":>2s} {"小时":>4s} {"位置":<6s}'
                f' {"RSI":>4s} {"入场价":>10s} {"止盈价":>10s} {"杠杆":>4s} {"TP1利润%":>8s}'
-               f' {"15mKOL":>7s} {"1HKOL":>5s} {"日KOL":>6s} {"对齐":>4s}')
+               f' {"1HKOL":>7s} {"4HKOL":>5s} {"日KOL":>6s} {"对齐":>4s}')
         print(hdr)
         print(f'  {dash2}')
         for i, r in enumerate(long_ok[:5], 1):
@@ -932,7 +937,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
     if all_results:
         sorted_results = sorted(all_results, key=lambda r: -r.get('alignment', 0))
         doc.add_heading('全量排名 (对齐度↓)', level=1)
-        headers = ['序','币种','方向','强度','方向','小时','位置','RSI','入场价','止盈价','杠杆','TP1%','15mKOL','1HKOL','日KOL','对齐']
+        headers = ['序','币种','方向','强度','方向','小时','位置','RSI','入场价','止盈价','杠杆','TP1%','1HKOL','4HKOL','日KOL','对齐']
         n = len(sorted_results)
         table = doc.add_table(rows=1 + n, cols=len(headers))
         table.style = 'Table Grid'
@@ -967,14 +972,14 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
         ('止盈价', 'TP1目标价：做多=R1阻力位，做空=S2支撑位'),
         ('杠杆', 'OKX该币种最大允许杠杆'),
         ('TP1利润%', '到TP1的利润=涨幅%×杠杆，≥100%即翻倍'),
-        ('15mKOL', '15分钟K线KOL投票：看多人数/看空人数'),
+        ('1HKOL', '15分钟K线KOL投票：看多人数/看空人数'),
         ('日KOL', '日线KOL投票：看多人数/看空人数'),
     ]
 
     # ── 做多表格 ──
     if long_ok:
         doc.add_heading('🟢 做多推荐', level=1)
-        headers = ['序','币种','强度','方向','小时','位置','RSI','入场1','加仓','止损','止盈','杠杆','TP1利润%','15mKOL','日KOL']
+        headers = ['序','币种','强度','方向','小时','位置','RSI','入场1','加仓','止损','止盈','杠杆','TP1利润%','1HKOL','日KOL']
         table = doc.add_table(rows=1 + len(long_ok[:5]), cols=len(headers))
         table.style = 'Table Grid'
         add_heading_row(table, headers)
@@ -995,7 +1000,7 @@ def save_to_docx(passed, short_ok, long_ok, all_results, total_coins, total_pass
     # ── 做空表格 ──
     if short_ok:
         doc.add_heading('🔴 做空推荐', level=1)
-        headers = ['序','币种','强度','方向','小时','位置','RSI','入场1','加仓','止损','止盈','杠杆','TP1利润%','15mKOL','日KOL']
+        headers = ['序','币种','强度','方向','小时','位置','RSI','入场1','加仓','止损','止盈','杠杆','TP1利润%','1HKOL','日KOL']
         table = doc.add_table(rows=1 + len(short_ok[:5]), cols=len(headers))
         table.style = 'Table Grid'
         add_heading_row(table, headers)
