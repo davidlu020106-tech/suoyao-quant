@@ -268,48 +268,48 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     """对一个币做三重时间框架分析(15m+1H+日线), 返回结果dict或None"""
     sym = f'{base}-USDT'
 
-    # ── LTF: 15m K线 (入场时机+短期KOL) ──
+    # ── 15m K线 (仅用于入场信号，不参与KOL/ADX) ──
     cdl_15m = fetch_ohlc(sym, '15m', 200)
-    if len(cdl_15m) < 20: return None
 
-    df_15m = pd.DataFrame(cdl_15m)
-    df_15m['date'] = pd.to_datetime(df_15m['date'])
-    df_15m = df_15m.set_index('date').sort_index()
-    feats_15m = build_features_single(df_15m)
-    lat_15m = feats_15m.iloc[-1]
-    cur = float(lat_15m['close'])
+    # ── LTF: 1H K线 (主决策: KOL/ADX/趋势) ──
+    cdl_1h = fetch_ohlc(sym, '1H', 200)
+    if len(cdl_1h) < 20: return None
+
+    df_1h = pd.DataFrame(cdl_1h)
+    df_1h['date'] = pd.to_datetime(df_1h['date'])
+    df_1h = df_1h.set_index('date').sort_index()
+    feats_1h = build_features_single(df_1h)
+    lat_1h = feats_1h.iloc[-1]
+    cur = float(lat_1h['close'])
 
     # 衍生品
     fr = fetch_funding_rate(base)
     oi = fetch_open_interest(base)
 
-    # 预计算因子分数 (CAP_REGISTRY 向量化评估)
-    feats_15m = feats_15m.copy()
-    feats_15m['funding_rate'] = fr
-    feats_15m['open_interest'] = oi
-    factor_scores_15m, _ = evaluate_all(feats_15m)
+    # 预计算因子分数 (1H)
+    feats_1h = feats_1h.copy()
+    feats_1h['funding_rate'] = fr
+    feats_1h['open_interest'] = oi
+    factor_scores_1h, _ = evaluate_all(feats_1h)
 
-    # LTF KOL投票
-    ltf_ln, ltf_sn, ltf_nn, ltf_avg = kol_vote(lat_15m, reg, rids, profs, fr, oi, factor_scores_15m, kol_weights)
+    # LTF KOL投票 (1H)
+    ltf_ln, ltf_sn, ltf_nn, ltf_avg = kol_vote(lat_1h, reg, rids, profs, fr, oi, factor_scores_1h, kol_weights)
 
-    # ── MTF: 1H K线 (中期趋势仲裁, 新增) ──
-    cdl_1h = fetch_ohlc(sym, '1H', 168)
+    # ── MTF: 4H K线 (中期趋势仲裁) ──
+    cdl_4h = fetch_ohlc(sym, '4H', 100)
     mtf_avg = 0.0; mtf_ln = mtf_sn = 0
-    feats_1h = None  # ★ 多周期位置一致性
-    if len(cdl_1h) >= 20:
-        df_1h = pd.DataFrame(cdl_1h)
-        df_1h['date'] = pd.to_datetime(df_1h['date'])
-        df_1h = df_1h.set_index('date').sort_index()
-        feats_1h = build_features_single(df_1h)
-        lat_1h = feats_1h.iloc[-1]
-
-        # 注入衍生品列 + 预计算因子
-        feats_1h = feats_1h.copy()
-        feats_1h['funding_rate'] = fr
-        feats_1h['open_interest'] = oi
-        factor_scores_1h, _ = evaluate_all(feats_1h)
-
-        mtf_ln, mtf_sn, _, mtf_avg = kol_vote(lat_1h, reg, rids, profs, fr, oi, factor_scores_1h, kol_weights)
+    feats_4h = None
+    if len(cdl_4h) >= 20:
+        df_4h = pd.DataFrame(cdl_4h)
+        df_4h['date'] = pd.to_datetime(df_4h['date'])
+        df_4h = df_4h.set_index('date').sort_index()
+        feats_4h = build_features_single(df_4h)
+        lat_4h = feats_4h.iloc[-1]
+        feats_4h = feats_4h.copy()
+        feats_4h['funding_rate'] = fr
+        feats_4h['open_interest'] = oi
+        factor_scores_4h, _ = evaluate_all(feats_4h)
+        mtf_ln, mtf_sn, _, mtf_avg = kol_vote(lat_4h, reg, rids, profs, fr, oi, factor_scores_4h, kol_weights)
         time.sleep(0.1)
 
     # ── HTF: 日线 (大趋势方向+Pivot) ──
@@ -336,7 +336,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         hh = max(c['high'] for c in cdl_daily)
         ll = min(c['low'] for c in cdl_daily)
     else:
-        hh = float(feats_15m['high'].max()); ll = float(feats_15m['low'].min())
+        hh = float(feats_1h['high'].max()); ll = float(feats_1h['low'].min())
     pv = (hh + ll + cur) / 3; r1 = 2 * pv - ll; r2 = pv + (hh - ll)
     s1 = 2 * pv - hh; s2 = pv - (hh - ll)
     r1_up = (r1 / cur - 1) * 100
@@ -345,12 +345,12 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     # 杠杆
     okx_lev = lev_map.get(base, 20) if lev_map else 20
 
-    # ADX + 趋势方向 (基于15m)
+    # ADX + 趋势方向 (基于1H)
     adx = 0; adx_trend = ''; adx_hours_left = 0
     try:
-        closes = np.array([c['close'] for c in cdl_15m])
-        highs = np.array([c['high'] for c in cdl_15m])
-        lows = np.array([c['low'] for c in cdl_15m])
+        closes = np.array([c['close'] for c in cdl_1h])
+        highs = np.array([c['high'] for c in cdl_1h])
+        lows = np.array([c['low'] for c in cdl_1h])
         from smc_entry_signal import calc_adx
         adx, adx_rising = calc_adx(closes, highs, lows, 14)
         if adx > 0:
@@ -399,10 +399,10 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     else:
         return None
 
-    # ★ 17维位置共识 (滚动百分位+速度+多周期)
+    # ★ 17维位置共识 (滚动百分位+速度+多周期, 基于1H)
     try:
         from position_gauges import evaluate_all_positions
-        pos_result = evaluate_all_positions(feats_15m, direction, feats_1h)
+        pos_result = evaluate_all_positions(feats_1h, direction, feats_4h)
         pos_score = pos_result['score']       # 裁尾均值百分位 0-100, 多周期修正后
         pos_speed = pos_result['speed']       # 速度 (正=恶化, 负=改善)
         pos_lean = pos_result['lean']         # 偏向
@@ -417,7 +417,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     # ★ 超级趋势识别 (20维, 纯标签不影响判断)
     try:
         from super_trend import detect_super_trend
-        st_result = detect_super_trend(feats_15m)
+        st_result = detect_super_trend(feats_1h)
         super_label = st_result['label']
     except Exception as e:
         super_label = f'—'
@@ -451,7 +451,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
     tp1_req_pct = 100.0 / okx_lev  # 翻倍所需%
     liq_ratio = cur / abs(cur - s2) if abs(cur - s2) > 0.001 else 1
     safe_lev = (okx_lev <= liq_ratio)
-    atr_val = float(lat_15m.get('atr14', 0))
+    atr_val = float(lat_1h.get('atr14', 0))
     if cur > 0 and atr_val > 0:
         atr_daily_pct = (atr_val / cur * 100) * 96 * 0.7
         days_to_tp1 = tp1_req_pct / atr_daily_pct if atr_daily_pct > 0 else 999
@@ -497,7 +497,7 @@ def analyze_coin(base, reg, rids, profs, min_r1=1.5, min_oi=600000, lev_map=None
         'daily_long': htf_ln, 'daily_short': htf_sn,
         'consistent': consistent,
         'adx': adx, 'adx_trend': adx_trend, 'adx_hours_left': adx_hours_left,
-        'rsi': float(lat_15m.get('rsi14', 50)),
+        'rsi': float(lat_1h.get('rsi14', 50)),
         # ★ 20维位置共识 (百分制, 替代单维度kc_pos)
         'kc_pos': pos_score / 100.0,       # 兼容旧代码: 转为[0,1]
         'pos_score': pos_score,
