@@ -806,6 +806,22 @@ def run(top_n=50, min_r1=1.5, min_oi=600000, coins=None):
             print(f'  ▶ {r["base"]} {dir_cn}{align_s}')
             print(f'    入场1 {fmt_price(r["entry"])}(20U) → 入场2 {fmt_price(orb_ref)}(30U) {tag}{hrs_s}')
             print(f'    止损 {fmt_price(stop)} | TP1 {fmt_price(target)}')
+            # ★ 15m入场信号评分(基于cdl_15m数据)
+            if 'df_15m' in r and r['df_15m']:
+                try:
+                    from entry_timing_v2 import score_entry_signals
+                    raw = r['df_15m']
+                    c_arr = np.array([x['close'] for x in raw[-50:]])
+                    h_arr = np.array([x['high'] for x in raw[-50:]])
+                    l_arr = np.array([x['low'] for x in raw[-50:]])
+                    v_arr = np.array([x.get('volume', 1) for x in raw[-50:]])
+                    o_arr = np.array([x['open'] for x in raw[-50:]])
+                    entry_score = score_entry_signals(h_arr, l_arr, c_arr, v_arr, o_arr, r['direction'])
+                    pct = entry_score['total']
+                    lvl = entry_score['level']
+                    print(f'    入场信号: {pct}% [{lvl}]')
+                except Exception:
+                    pass
         print()
 
     # ── 未通过的原因统计 ──

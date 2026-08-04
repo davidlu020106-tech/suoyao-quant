@@ -2187,9 +2187,28 @@ def signal_volume_profile_confirm(close, volume, direction):
 def score_entry_signals(high, low, close, volume, open_p, direction,
                         bb_lower=None, bb_upper=None, rsi=None, adx=None,
                         htf_direction=None):
-    """100个信号终极评分, 总分0-100: >=60强/30-59弱/<30无"""
-    a={...TBD...}
-    j={
+    """100信号终极评分, 0-100%: >=60%强/30-59%弱/<30%无
+    
+    调用 score_entry_signals_v8 (A-H, 80信号) + I (10信号) + J (10信号)
+    """
+    # A-H (80信号) from v8
+    r = score_entry_signals_v8(high, low, close, volume, open_p, direction,
+                               bb_lower, bb_upper, rsi, adx, htf_direction)
+    # I batch (波动率突变)
+    i = {
+        'I1_BB Squeeze':  signal_bb_squeeze(close,direction),
+        'I2_KC Squeeze':  signal_kc_squeeze(high,low,close,direction),
+        'I3_ATR跳升':    signal_atr_spike(high,low,close,direction),
+        'I4_波量双爆':   signal_vol_breakout(high,low,close,volume,direction),
+        'I5_Squeeze动量': signal_squeeze_momentum(close,direction),
+        'I6_双Squeeze':  signal_dual_squeeze(high,low,close,direction),
+        'I7_自适应波':   signal_adaptive_vol(high,low,close,direction),
+        'I8_零滞波突':   signal_zerolag_vol(high,low,close,direction),
+        'I9_波率反转':   signal_vol_reversal(close,direction),
+        'I10_动量挤压':  signal_momentum_squeeze_break(close,direction),
+    }
+    # J batch (量价配合)
+    j = {
         'J1_放量确认': signal_volume_confirm(close,volume,direction),
         'J2_OBV趋势':  signal_obv_trend(close,volume,direction),
         'J3_MFI资金流': signal_mfi_flow(high,low,close,volume,direction),
@@ -2198,6 +2217,18 @@ def score_entry_signals(high, low, close, volume, open_p, direction,
         'J6_AD线':     signal_ad_line(high,low,close,volume,direction),
         'J7_CMF资金流': signal_cmf_flow(high,low,close,volume,direction),
         'J8_量支撑':    signal_volume_support(high,low,close,volume,direction),
-        'J9_EOM容易移动': signal_ease_of_movement(high,low,volume,close,direction),
+        'J9_EOM易移动': signal_ease_of_movement(high,low,volume,close,direction),
         'J10_量分布POC': signal_volume_profile_confirm(close,volume,direction),
+    }
+    all_s = {**r['signals'], **i, **j}
+    total = sum(all_s.values())
+    trig = [k for k,v in all_s.items() if v]
+    level = '强' if total >= 60 else ('弱' if total >= 30 else '无')
+    return {
+        'total': total, 'level': level, 'signals': all_s, 'details': trig,
+        'breakout': r.get('breakout',0), 'pullback': r.get('pullback',0),
+        'candle': r.get('candle',0), 'smc': r.get('smc',0),
+        'combo': r.get('combo',0), 'divergence': r.get('divergence',0),
+        'range': r.get('range',0), 'bounce': r.get('bounce',0),
+        'volatility': sum(i.values()), 'volume_flow': sum(j.values()),
     }
